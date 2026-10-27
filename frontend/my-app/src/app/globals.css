@@ -1,0 +1,56 @@
+
+@import "tailwindcss";
+
+:root {
+  /* RoboRally — Industrial Command */
+  --rr-bg: #171b20;
+  --rr-surface: #222830;
+  --rr-surface-raised: #343c45;
+  --rr-border: #48515b;
+
+  --rr-text: #f3f0e8;
+  --rr-text-muted: #aab1b8;
+
+  --rr-accent: #ff9f1c;
+  --rr-accent-hover: #ffb84d;
+  --rr-accent-foreground: #171b20;
+
+  --rr-success: #70b7a1;
+  --rr-danger: #f06b59;
+  --rr-warning: #f4c95d;
+
+  
+}
+
+@theme inline {
+  --color-background: var(--rr-bg);
+  --color-foreground: var(--rr-text);
+
+  --color-surface: var(--rr-surface);
+  --color-surface-raised: var(--rr-surface-raised);
+  --color-border: var(--rr-border);
+
+  --color-muted: var(--rr-text-muted);
+
+  --color-accent: var(--rr-accent);
+  --color-accent-hover: var(--rr-accent-hover);
+  --color-accent-foreground: var(--rr-accent-foreground);
+
+  --color-success: var(--rr-success);
+  --color-danger: var(--rr-danger);
+  --color-warning: var(--rr-warning);
+
+  --font-orbitron: var(--font-orbitron);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background: var(--rr-bg);
+  color: var(--rr-text);
+  font-family: var(--orbitron-font), sans-serif;;
+}
+
