@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { useState } from "react";
 
 const publicLinks = [
   { label: "Home", href: "/" },
@@ -12,6 +13,19 @@ const publicLinks = [
 export default function Header() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  async function handleLogout() {
+    setLoggingOut(true);
+
+    try {
+      await logout();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    } finally {
+      setLoggingOut(false);
+    }
+  }
 
   const navLinks = user
     ? [...publicLinks, { label: "Profile", href: "/playerdetails" }]
@@ -140,10 +154,11 @@ export default function Header() {
         {user && (
           <button
             type="button"
-            onClick={logout}
-            className="shrink-0 rounded-md px-3 py-2 text-xs font-medium text-muted hover:text-danger"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="rounded-lg border border-border px-3 py-2 text-sm font-medium transition hover:border-danger/60 hover:text-danger disabled:opacity-50"
           >
-            Log out
+            {loggingOut ? "Logging out..." : "Log out"}
           </button>
         )}
       </div>

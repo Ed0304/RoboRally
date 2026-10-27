@@ -1,10 +1,10 @@
+
 """Login, current-user, and logout endpoints."""
 
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
-import common
+from pydantic import BaseModel, EmailStr, Field
 
 from authentication.common import (
     PASSWORD_HASHER,
@@ -18,8 +18,10 @@ from authentication.common import (
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-# A fixed dummy hash keeps the unknown-account path close in cost to a real login.
-_DUMMY_PASSWORD_HASH = PASSWORD_HASHER.hash("not-a-real-user-password")
+# Reduce timing differences for nonexistent accounts.
+_DUMMY_PASSWORD_HASH = PASSWORD_HASHER.hash(
+    "not-a-real-user-password"
+)
 
 
 class LoginRequest(BaseModel):
@@ -28,31 +30,55 @@ class LoginRequest(BaseModel):
 
 
 class UserResponse(BaseModel):
-    id: int
+    id: str
     username: str
-    email: str
+    email: EmailStr
 
 
 @router.post("/login", response_model=UserResponse)
-def login(payload: LoginRequest, response: Response) -> UserResponse:
+def login(
+    payload: LoginRequest,
+    response: Response,
+) -> UserResponse:
     identifier = payload.identifier.strip()
-    with connect_database() as connection:
-        user = connection.execute(
-            "SELECT id, username, email, password_hash FROM users "
-            "WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE",
-            (identifier, identifier),
-        ).fetchone()
+    normalized = identifier.lower()
 
-    stored_hash = user["password_hash"] if user else _DUMMY_PASSWORD_HASH
-    password_is_valid = PASSWORD_HASHER.verify(payload.password, stored_hash)
+    users = connect_database()
+
+    user = users.find_one({
+        "$or": [
+            {"username_normalized": normalized},
+            {"email_normalized": normalized},
+        ]
+    })
+
+    stored_hash = (
+        user["password_hash"] if user else _DUMMY_PASSWORD_HASH
+    )
+
+    password_is_valid = PASSWORD_HASHER.verify(
+        payload.password,
+        stored_hash,
+    )
+
     if user is None or not password_is_valid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username/email or password.",
         )
 
-    set_session_cookie(response, create_session_token(user["id"]))
-    return UserResponse(id=user["id"], username=user["username"], email=user["email"])
+    user_id = str(user["_id"])
+
+    set_session_cookie(
+        response,
+        create_session_token(user_id),
+    )
+
+    return UserResponse(
+        id=user_id,
+        username=user["username"],
+        email=user["email"],
+    )
 
 
 @router.get("/me", response_model=UserResponse)
@@ -71,4 +97,5 @@ def logout(response: Response) -> dict[str, str]:
         secure=session_cookie_secure(),
         samesite="lax",
     )
+
     return {"message": "Logged out."}

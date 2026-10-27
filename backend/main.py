@@ -2,6 +2,8 @@
 from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
+
+from authentication import login, register
 app = FastAPI(
     title="RoboRally API",
     description= "Backend for RoboRally: The factory rescue",
@@ -9,9 +11,12 @@ app = FastAPI(
 )
 
 origins = [
-    "http://localhost:3000/" #NextJS frontend, localhost
+    "http://localhost:3000" #NextJS frontend, localhost
     # TODO: Add deployment URL once deployed.
 ]
+
+app.include_router(login.router)
+app.include_router(register.router)
 
 #Enable CORS - IMPORTANT!
 app.add_middleware(

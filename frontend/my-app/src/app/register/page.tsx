@@ -3,6 +3,9 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
+
 
 export default function RegisterPage() {
   const [username, setUsername] = useState("");
@@ -10,18 +13,33 @@ export default function RegisterPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
+  const router = useRouter();
+  const { register } = useAuth();
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setMessage("");
 
     if (password !== confirmPassword) {
       setMessage("Passwords do not match.");
       return;
     }
 
-    setMessage(
-      "Registration UI is ready. Connect your FastAPI endpoint next."
-    );
+    setSubmitting(true);
+
+    try {
+      await register(username, email, password);
+      router.push("/");
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to register. Please try again.",
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -156,11 +174,10 @@ export default function RegisterPage() {
             </p>
           )}
 
-          <button
-            type="submit"
+          <button type="submit" disabled={submitting}
             className="w-full rounded-lg bg-accent px-4 py-3.5 font-bold text-accent-foreground shadow-md transition hover:bg-accent-hover active:scale-[0.98]"
           >
-            Create Account
+            {submitting ? "Creating account..." : "Create Account"}
             <span className="ml-2" aria-hidden="true">
               →
             </span>
