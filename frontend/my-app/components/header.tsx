@@ -1,35 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useState } from "react";
+import { setFlashMessage } from "@/lib/flash";
+import { usePathname, useRouter } from "next/navigation";
 
 const publicLinks = [
   { label: "Home", href: "/" },
   { label: "How to Play", href: "/howtoplay" },
+  { label: "Profile", href: "/playerdetails" }
 ];
 
 export default function Header() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
+  const router = useRouter();
 
   async function handleLogout() {
     setLoggingOut(true);
 
     try {
       await logout();
-    } catch (error) {
-      console.error("Logout failed:", error);
+
+      setFlashMessage({
+        type: "success",
+        message: "You have been logged out successfully.",
+      });
+
+      router.replace("/");
+    } catch {
+      setFlashMessage({
+        type: "error",
+        message: "Logout failed. Please try again.",
+      });
     } finally {
       setLoggingOut(false);
     }
   }
 
-  const navLinks = user
-    ? [...publicLinks, { label: "Profile", href: "/playerdetails" }]
-    : publicLinks;
+  const navLinks = publicLinks
 
   const accountLinks = user
     ? [{ label: "Profile", href: "/playerdetails" }]
@@ -82,12 +93,14 @@ export default function Header() {
                 Operator: {user.username}
               </span>
 
+              
               <button
                 type="button"
-                onClick={logout}
-                className="rounded-lg border border-border px-3 py-2 text-sm font-medium transition hover:border-danger/60 hover:text-danger"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="rounded-lg border border-border px-3 py-2 text-sm font-medium transition hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Log out
+                {loggingOut ? "Logging out..." : "Log out"}
               </button>
             </>
           ) : (

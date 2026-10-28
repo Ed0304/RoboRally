@@ -14,7 +14,7 @@ origins = [
     "http://localhost:3000" #NextJS frontend, localhost
     # TODO: Add deployment URL once deployed.
 ]
-
+# Add routers for authentication, AI and game logic
 app.include_router(login.router)
 app.include_router(register.router)
 
