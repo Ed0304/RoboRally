@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-
+from game_logic import levels
 from authentication import login, register
 app = FastAPI(
     title="RoboRally API",
@@ -17,6 +17,7 @@ origins = [
 # Add routers for authentication, AI and game logic
 app.include_router(login.router)
 app.include_router(register.router)
+app.include_router(levels.router)
 
 #Enable CORS - IMPORTANT!
 app.add_middleware(

@@ -17,6 +17,25 @@ const directionRotation: Record<RobotState["direction"], number> = {
   west: Math.PI / 2,
 };
 
+
+function DirectionPointer() {
+  return (
+    <mesh
+      position={[0, 1.25, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      <coneGeometry args={[0.16, 0.35, 3]} />
+      <meshStandardMaterial
+        color="#FF8A24"
+        emissive="#FF6500"
+        emissiveIntensity={1.2}
+        roughness={0.35}
+      />
+    </mesh>
+  );
+}
+
+
 export default function Robot({ state }: RobotProps) {
   const robotRef = useRef<THREE.Group>(null);
 
@@ -102,6 +121,8 @@ export default function Robot({ state }: RobotProps) {
         <cylinderGeometry args={[0.025, 0.025, 0.12, 8]} />
         <meshStandardMaterial color="#FF8A24" />
       </mesh>
+
+      <DirectionPointer/>
     </group>
   );
 }

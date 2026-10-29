@@ -1,5 +1,5 @@
 
-import { maze, MAZE_WIDTH, MAZE_DEPTH } from "./maze";
+import type { MazeDefinition } from "./maze";
 
 export interface RobotState {
   x: number;
@@ -7,23 +7,12 @@ export interface RobotState {
   direction: "north" | "south" | "east" | "west";
 }
 
-export const initialRobotState: RobotState = {
-  x: 1,
-  z: 1,
-  direction: "south",
-};
-
-export function canMoveTo(x: number, z: number): boolean {
-  if (
-    x < 0 ||
-    x >= MAZE_WIDTH ||
-    z < 0 ||
-    z >= MAZE_DEPTH
-  ) {
-    return false;
-  }
-
-  const tile = maze.find(
+export function canMoveTo(
+  x: number,
+  z: number,
+  maze: MazeDefinition
+): boolean {
+  const tile = maze.tiles.find(
     (tile) => tile.x === x && tile.z === z
   );
 
@@ -32,7 +21,8 @@ export function canMoveTo(x: number, z: number): boolean {
 
 export function moveRobot(
   state: RobotState,
-  direction: RobotState["direction"]
+  direction: RobotState["direction"],
+  maze: MazeDefinition
 ): RobotState {
   const offsets = {
     north: { x: 0, z: -1 },
@@ -45,8 +35,7 @@ export function moveRobot(
   const nextX = state.x + offset.x;
   const nextZ = state.z + offset.z;
 
-  // Always update the facing direction, even if blocked.
-  if (!canMoveTo(nextX, nextZ)) {
+  if (!canMoveTo(nextX, nextZ, maze)) {
     return { ...state, direction };
   }
 

@@ -1,8 +1,12 @@
-import { maze } from "@/lib/maze";
+
+import type { MazeDefinition } from "@/lib/maze";
 import type { RobotState } from "@/lib/gamelogic";
 
-export function hasWon(state: RobotState): boolean {
-  const tile = maze.find(
+export function hasWon(
+  state: RobotState,
+  maze: MazeDefinition
+): boolean {
+  const tile = maze.tiles.find(
     (tile) => tile.x === state.x && tile.z === state.z
   );
 

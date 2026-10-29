@@ -14,9 +14,11 @@ export interface Level {
   type: LevelType;
   difficulty: Difficulty;
   goal: LevelGoal;
+  layout: string[];
 }
 
 export const levels: Level[] = [
+  // Tutorial 1: Basic navigation
   {
     id: 1,
     name: "The Basics",
@@ -25,7 +27,20 @@ export const levels: Level[] = [
     type: "Tutorial",
     difficulty: "Easy",
     goal: "Get to the finish line",
+    layout: [
+      "###########",
+      "#S........#",
+      "#.#####...#",
+      "#.....#...#",
+      "###.#.#...#",
+      "#...#.....#",
+      "#.........#",
+      "#........E#",
+      "###########",
+    ],
   },
+
+  // Tutorial 2: Laser hazards
   {
     id: 2,
     name: "Hazards",
@@ -34,7 +49,20 @@ export const levels: Level[] = [
     type: "Tutorial",
     difficulty: "Easy",
     goal: "Get to the finish line",
+    layout: [
+      "###########",
+      "#S..L.....#",
+      "#.###.###.#",
+      "#...L.....#",
+      "###.###.#.#",
+      "#.....L.#.#",
+      "#.####...L#",
+      "#........E#",
+      "###########",
+    ],
   },
+
+  // Tutorial 3: Alternate routes and trigger-controlled doors
   {
     id: 3,
     name: "Something Unexpected",
@@ -43,7 +71,20 @@ export const levels: Level[] = [
     type: "Tutorial",
     difficulty: "Medium",
     goal: "Get to the finish line",
+    layout: [
+      "###########",
+      "#S..#.....#",
+      "#...#..D..#",
+      "#.###..#..#",
+      "#....!.#..#",
+      "####.#.#..#",
+      "#......#..#",
+      "#.........E#",
+      "###########",
+    ],
   },
+
+  // Story 1: Collect energy cells
   {
     id: 4,
     name: "Power Up",
@@ -52,7 +93,20 @@ export const levels: Level[] = [
     type: "Story",
     difficulty: "Easy",
     goal: "Collect all items",
+    layout: [
+      "###########",
+      "#S..C.....#",
+      "#.#####.#.#",
+      "#...C...#.#",
+      "###.###.#.#",
+      "#.....C...#",
+      "#.#######.#",
+      "#........E#",
+      "###########",
+    ],
   },
+
+  // Story 2: Hostile robots and locked doors
   {
     id: 5,
     name: "Hostile Takeover",
@@ -61,7 +115,20 @@ export const levels: Level[] = [
     type: "Story",
     difficulty: "Medium",
     goal: "Defeat all enemies",
+    layout: [
+      "###########",
+      "#S...#....#",
+      "#.R..#..D.#",
+      "#.....#...#",
+      "###.#.!...#",
+      "#...#.#R..#",
+      "#.....#...#",
+      "#.........E#",
+      "###########",
+    ],
   },
+
+  // Story 3: Full factory rescue challenge
   {
     id: 6,
     name: "The Factory Rescue",
@@ -70,5 +137,16 @@ export const levels: Level[] = [
     type: "Story",
     difficulty: "Hard",
     goal: "Collect all items",
+    layout: [
+      "###########",
+      "#S..L.....#",
+      "#.###.###.#",
+      "#C..R...D.#",
+      "###.#L#.#.#",
+      "#...#!#C..#",
+      "#.###.#.###",
+      "#.....L..E#",
+      "###########",
+    ],
   },
 ];
