@@ -2,7 +2,6 @@
 import type { MazeDefinition } from "./maze";
 import {
   isRobotDetected,
-  hasEnemyLineOfSight,
   type EnemyPosition,
 } from "./enemyAI";
 
@@ -17,19 +16,26 @@ export type GameStatus = "playing" | "dead" | "won";
 export function canMoveTo(
   x: number,
   z: number,
-  maze: MazeDefinition
+  maze: MazeDefinition,
+  doorOpen = false
 ): boolean {
   const tile = maze.tiles.find(
     (tile) => tile.x === x && tile.z === z
   );
 
-  return tile !== undefined && !tile.blocksMovement;
+  if (!tile) return false;
+
+  // An open door is passable, but walls and lasers remain blocked.
+  if (tile.type === "door") return doorOpen;
+
+  return !tile.blocksMovement;
 }
 
 export function moveRobot(
   state: RobotState,
   direction: RobotState["direction"],
-  maze: MazeDefinition
+  maze: MazeDefinition,
+  doorOpen = false
 ): RobotState {
   const offsets = {
     north: { x: 0, z: -1 },
@@ -42,7 +48,7 @@ export function moveRobot(
   const nextX = state.x + offset.x;
   const nextZ = state.z + offset.z;
 
-  if (!canMoveTo(nextX, nextZ, maze)) {
+  if (!canMoveTo(nextX, nextZ, maze, doorOpen)) {
     return { ...state, direction };
   }
 
@@ -58,7 +64,6 @@ export function checkGameStatus(
   maze: MazeDefinition,
   enemies?: EnemyPosition[]
 ): GameStatus {
-  // Lasers cause instant death.
   const touchingLaser = maze.tiles.some(
     (tile) =>
       tile.x === robot.x &&
@@ -68,8 +73,6 @@ export function checkGameStatus(
 
   if (touchingLaser) return "dead";
 
-  // Use live patrol positions when supplied.
-  // Otherwise, check the original enemy markers.
   const activeEnemies: EnemyPosition[] =
     enemies ??
     maze.tiles
@@ -87,7 +90,6 @@ export function checkGameStatus(
     return "dead";
   }
 
-  // Reaching the exit wins, provided the robot survived the checks above.
   if (robot.x === maze.exit.x && robot.z === maze.exit.z) {
     return "won";
   }

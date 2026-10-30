@@ -58,6 +58,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
   );
 
   const [status, setStatus] = useState<GameStatus>("playing");
+  const [doorOpen, setDoorOpen] = useState(false);
 
   // Refs let the patrol timer access the latest positions.
   const robotRef = useRef(robotState);
@@ -157,8 +158,21 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
       const nextRobot = moveRobot(
         robotRef.current,
         direction,
-        maze
+        maze,
+        doorOpen
       );
+
+      const trigger = maze.tiles.find(
+        (tile) => tile.type === "trigger"
+      );
+
+      if (
+        trigger &&
+        nextRobot.x === trigger.x &&
+        nextRobot.z === trigger.z
+      ) {
+        setDoorOpen(true);
+      }
 
       robotRef.current = nextRobot;
       setRobotState(nextRobot);
@@ -179,7 +193,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [maze, status]);
+  }, [maze, status, doorOpen]);
 
   function restart() {
     const initialRobot: RobotState = {
@@ -195,6 +209,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     setRobotState(initialRobot);
     setEnemyPositions(initialEnemies);
     setStatus("playing");
+    setDoorOpen(false);
   }
 
   return (
@@ -227,6 +242,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           <MazeTiles
             maze={maze}
             enemyPositions={displayedEnemies}
+            doorOpen={doorOpen}
           />
           <Robot state={robotState} />
         </group>

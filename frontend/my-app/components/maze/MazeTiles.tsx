@@ -15,6 +15,7 @@ interface DisplayEnemy extends EnemyPosition {
 interface MazeTilesProps {
   maze: MazeDefinition;
   enemyPositions: DisplayEnemy[];
+  doorOpen: boolean;
 }
 
 type BarrierOrientation = "horizontal" | "vertical";
@@ -117,12 +118,15 @@ function LaserTile({
   );
 }
 
+
 function DoorTile({
   tile,
   orientation,
+  open,
 }: {
   tile: MazeTile;
   orientation: BarrierOrientation;
+  open: boolean;
 }) {
   return (
     <group
@@ -133,45 +137,79 @@ function DoorTile({
         0,
       ]}
     >
-      {/* Heavy industrial door panel */}
-      <mesh position={[0, 0.47, 0]} castShadow receiveShadow>
-        <boxGeometry args={[0.82, 0.92, 0.16]} />
-        <meshStandardMaterial
-          color="#858B91"
-          metalness={0.7}
-          roughness={0.38}
-        />
-      </mesh>
+      {open ? (
+        <>
+          {/* Open doorway side posts */}
+          {[-0.4, 0.4].map((x) => (
+            <mesh
+              key={x}
+              position={[x, 0.42, 0]}
+              castShadow
+            >
+              <boxGeometry args={[0.08, 0.84, 0.16]} />
+              <meshStandardMaterial
+                color="#38BDF8"
+                emissive="#0284C7"
+                emissiveIntensity={1.5}
+                metalness={0.6}
+              />
+            </mesh>
+          ))}
 
-      {/* Central door seam */}
-      <mesh position={[0, 0.47, 0.084]}>
-        <boxGeometry args={[0.025, 0.86, 0.012]} />
-        <meshStandardMaterial color="#272B30" />
-      </mesh>
+          {/* Green indicator means the door is unlocked */}
+          <mesh position={[0, 0.91, 0]}>
+            <boxGeometry args={[0.5, 0.07, 0.12]} />
+            <meshStandardMaterial
+              color="#22C55E"
+              emissive="#16A34A"
+              emissiveIntensity={2}
+            />
+          </mesh>
+        </>
+      ) : (
+        <>
+          {/* Closed industrial door panel */}
+          <mesh position={[0, 0.47, 0]} castShadow receiveShadow>
+            <boxGeometry args={[0.82, 0.92, 0.16]} />
+            <meshStandardMaterial
+              color="#858B91"
+              metalness={0.7}
+              roughness={0.38}
+            />
+          </mesh>
 
-      {/* Top and bottom reinforcement bars */}
-      {[-0.38, 0.38].map((y) => (
-        <mesh key={y} position={[0, 0.47 + y, 0.09]}>
-          <boxGeometry args={[0.74, 0.045, 0.025]} />
-          <meshStandardMaterial
-            color="#454B52"
-            metalness={0.8}
-          />
-        </mesh>
-      ))}
+          {/* Central seam */}
+          <mesh position={[0, 0.47, 0.084]}>
+            <boxGeometry args={[0.025, 0.86, 0.012]} />
+            <meshStandardMaterial color="#272B30" />
+          </mesh>
 
-      {/* Amber lock indicator */}
-      <mesh position={[0.23, 0.53, 0.105]}>
-        <boxGeometry args={[0.075, 0.075, 0.025]} />
-        <meshStandardMaterial
-          color="#F2A93B"
-          emissive="#F2A93B"
-          emissiveIntensity={1.5}
-        />
-      </mesh>
+          {/* Reinforcement bars */}
+          {[-0.38, 0.38].map((y) => (
+            <mesh key={y} position={[0, 0.47 + y, 0.09]}>
+              <boxGeometry args={[0.74, 0.045, 0.025]} />
+              <meshStandardMaterial
+                color="#454B52"
+                metalness={0.8}
+              />
+            </mesh>
+          ))}
+
+          {/* Amber lock indicator */}
+          <mesh position={[0.23, 0.53, 0.105]}>
+            <boxGeometry args={[0.075, 0.075, 0.025]} />
+            <meshStandardMaterial
+              color="#F2A93B"
+              emissive="#F2A93B"
+              emissiveIntensity={1.5}
+            />
+          </mesh>
+        </>
+      )}
     </group>
   );
 }
+
 
 function CollectibleTile({ tile }: { tile: MazeTile }) {
   return (
@@ -323,10 +361,17 @@ function EnemyTile({
 }
 
 
-function TriggerTile({ tile }: { tile: MazeTile }) {
+function TriggerTile({
+  tile,
+  active,
+}: {
+  tile: MazeTile;
+  active: boolean;
+}) {
+  const color = active ? "#22C55E" : "#F2A93B";
+
   return (
     <group position={[tile.x, 0.025, tile.z]}>
-      {/* Simple X-shaped floor marking */}
       {[Math.PI / 4, -Math.PI / 4].map((rotation) => (
         <mesh
           key={rotation}
@@ -334,9 +379,9 @@ function TriggerTile({ tile }: { tile: MazeTile }) {
         >
           <boxGeometry args={[0.68, 0.075, 0.075]} />
           <meshStandardMaterial
-            color="#F2A93B"
-            emissive="#F2A93B"
-            emissiveIntensity={0.7}
+            color={color}
+            emissive={color}
+            emissiveIntensity={active ? 1.8 : 0.7}
           />
         </mesh>
       ))}
@@ -347,9 +392,11 @@ function TriggerTile({ tile }: { tile: MazeTile }) {
 function SpecialTile({
   tile,
   maze,
+  doorOpen,
 }: {
   tile: MazeTile;
   maze: MazeDefinition;
+  doorOpen: boolean;
 }) {
   switch (tile.type) {
     case "laser":
@@ -363,7 +410,11 @@ function SpecialTile({
       return tile.type === "laser" ? (
         <LaserTile tile={tile} orientation={orientation} />
       ) : (
-        <DoorTile tile={tile} orientation={orientation} />
+        <DoorTile
+          tile={tile}
+          orientation={orientation}
+          open={doorOpen}
+        />
       );
     }
 
@@ -374,16 +425,16 @@ function SpecialTile({
       return null; // Enemy tiles are rendered separately in the Maze component.
 
     case "trigger":
-      return <TriggerTile tile={tile} />;
+      return <TriggerTile tile={tile} active={doorOpen} />;
 
     default:
       return null;
   }
 }
-
 export default function MazeTiles({
   maze,
   enemyPositions,
+  doorOpen,
 }: MazeTilesProps) {
   return (
     <>
@@ -429,7 +480,11 @@ export default function MazeTiles({
             </mesh>
           )}
 
-          <SpecialTile tile={tile} maze={maze} />
+          <SpecialTile
+            tile={tile}
+            maze={maze}
+            doorOpen={doorOpen}
+          />
         </group>
       ))}
 
