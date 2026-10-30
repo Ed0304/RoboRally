@@ -3,13 +3,65 @@
 
 import type { MazeDefinition, MazeTile } from "@/lib/maze";
 
-interface MazeTilesProps {
-  maze: MazeDefinition;
+import type {
+  EnemyPosition,
+  EnemyFacing,
+} from "@/lib/enemyAI";
+
+interface DisplayEnemy extends EnemyPosition {
+  alerted: boolean;
 }
 
-function LaserTile({ tile }: { tile: MazeTile }) {
+interface MazeTilesProps {
+  maze: MazeDefinition;
+  enemyPositions: DisplayEnemy[];
+}
+
+type BarrierOrientation = "horizontal" | "vertical";
+
+// Infer the barrier's orientation from the wall blocks around it.
+function getBarrierOrientation(
+  tile: MazeTile,
+  maze: MazeDefinition
+): BarrierOrientation | null {
+  const isWall = (x: number, z: number) =>
+    maze.tiles.some(
+      (candidate) =>
+        candidate.x === x &&
+        candidate.z === z &&
+        candidate.type === "wall"
+    );
+
+  const horizontal =
+    isWall(tile.x - 1, tile.z) &&
+    isWall(tile.x + 1, tile.z);
+
+  const vertical =
+    isWall(tile.x, tile.z - 1) &&
+    isWall(tile.x, tile.z + 1);
+
+  if (horizontal && !vertical) return "horizontal";
+  if (vertical && !horizontal) return "vertical";
+
+  return null;
+}
+
+function LaserTile({
+  tile,
+  orientation,
+}: {
+  tile: MazeTile;
+  orientation: BarrierOrientation;
+}) {
   return (
-    <group position={[tile.x, 0, tile.z]}>
+    <group
+      position={[tile.x, 0, tile.z]}
+      rotation={[
+        0,
+        orientation === "vertical" ? Math.PI / 2 : 0,
+        0,
+      ]}
+    >
       {/* Dark emitter posts */}
       {[-0.39, 0.39].map((x) => (
         <group key={x} position={[x, 0.16, 0]}>
@@ -65,9 +117,22 @@ function LaserTile({ tile }: { tile: MazeTile }) {
   );
 }
 
-function DoorTile({ tile }: { tile: MazeTile }) {
+function DoorTile({
+  tile,
+  orientation,
+}: {
+  tile: MazeTile;
+  orientation: BarrierOrientation;
+}) {
   return (
-    <group position={[tile.x, 0, tile.z]}>
+    <group
+      position={[tile.x, 0, tile.z]}
+      rotation={[
+        0,
+        orientation === "vertical" ? Math.PI / 2 : 0,
+        0,
+      ]}
+    >
       {/* Heavy industrial door panel */}
       <mesh position={[0, 0.47, 0]} castShadow receiveShadow>
         <boxGeometry args={[0.82, 0.92, 0.16]} />
@@ -162,49 +227,101 @@ function CollectibleTile({ tile }: { tile: MazeTile }) {
   );
 }
 
-function EnemyTile({ tile }: { tile: MazeTile }) {
+function EnemyTile({
+  x,
+  z,
+  facing,
+  alerted,
+}: {
+  x: number;
+  z: number;
+  facing: EnemyFacing;
+  alerted: boolean;
+}) {
+  const yaw = {
+    north: Math.PI,
+    south: 0,
+    east: Math.PI / 2,
+    west: -Math.PI / 2,
+  }[facing];
+
   return (
-    <group position={[tile.x, 0, tile.z]}>
-      {/* Dark robot chassis */}
-      <mesh position={[0, 0.32, 0]} castShadow>
-        <boxGeometry args={[0.66, 0.64, 0.66]} />
-        <meshStandardMaterial
-          color="#101216"
-          metalness={0.85}
-          roughness={0.28}
-        />
-      </mesh>
+    <>
+      <group position={[x, 0, z]} rotation={[0, yaw, 0]}>
+        {/* Robot body */}
+        <mesh
+          position={[0, 0.32, 0]}
+          castShadow
+        >
+          <boxGeometry args={[0.66, 0.64, 0.66]} />
+          <meshStandardMaterial
+            color="#101216"
+            metalness={0.85}
+            roughness={0.28}
+          />
+        </mesh>
 
-      {/* Red armor stripe */}
-      <mesh position={[0, 0.52, 0.337]}>
-        <boxGeometry args={[0.68, 0.16, 0.045]} />
-        <meshStandardMaterial
-          color="#A00020"
-          emissive="#E00030"
-          emissiveIntensity={1.3}
-          metalness={0.45}
-          roughness={0.3}
-        />
-      </mesh>
+        {/* Forward-facing red sensor */}
+        <mesh position={[0, 0.52, 0.337]}>
+          <boxGeometry args={[0.68, 0.16, 0.045]} />
+          <meshStandardMaterial
+            color="#A00020"
+            emissive="#E00030"
+            emissiveIntensity={1.3}
+            metalness={0.45}
+            roughness={0.3}
+          />
+        </mesh>
 
-      {/* Glowing hostile sensor */}
-      <mesh position={[0, 0.33, 0.345]}>
-        <boxGeometry args={[0.2, 0.055, 0.025]} />
-        <meshBasicMaterial
-          color="#FF354D"
-          toneMapped={false}
-        />
-      </mesh>
+        <mesh position={[0, 0.33, 0.345]}>
+          <boxGeometry args={[0.2, 0.055, 0.025]} />
+          <meshBasicMaterial
+            color="#FF354D"
+            toneMapped={false}
+          />
+        </mesh>
 
-      <pointLight
-        position={[0, 0.45, 0.5]}
-        color="#FF173D"
-        intensity={0.5}
-        distance={1.2}
-      />
-    </group>
+        <pointLight
+          position={[0, 0.45, 0.5]}
+          color="#FF173D"
+          intensity={0.5}
+          distance={1.2}
+        />
+      </group>
+
+      {/* Alert marker stays upright regardless of robot rotation */}
+      {alerted && (
+        <group position={[x, 1.05, z]}>
+          {/* Exclamation bar */}
+          <mesh position={[0, 0.13, 0]}>
+            <boxGeometry args={[0.12, 0.32, 0.12]} />
+            <meshBasicMaterial
+              color="#FFB020"
+              toneMapped={false}
+            />
+          </mesh>
+
+          {/* Exclamation dot */}
+          <mesh position={[0, -0.1, 0]}>
+            <sphereGeometry args={[0.075, 12, 12]} />
+            <meshBasicMaterial
+              color="#FFB020"
+              toneMapped={false}
+            />
+          </mesh>
+
+          <pointLight
+            position={[0, 0.1, 0]}
+            color="#FF9D00"
+            intensity={0.8}
+            distance={2}
+          />
+        </group>
+      )}
+    </>
   );
 }
+
 
 function TriggerTile({ tile }: { tile: MazeTile }) {
   return (
@@ -227,19 +344,34 @@ function TriggerTile({ tile }: { tile: MazeTile }) {
   );
 }
 
-function SpecialTile({ tile }: { tile: MazeTile }) {
+function SpecialTile({
+  tile,
+  maze,
+}: {
+  tile: MazeTile;
+  maze: MazeDefinition;
+}) {
   switch (tile.type) {
     case "laser":
-      return <LaserTile tile={tile} />;
+    case "door": {
+      const orientation = getBarrierOrientation(tile, maze);
 
-    case "door":
-      return <DoorTile tile={tile} />;
+      if (orientation === null) {
+        return null;
+      }
+
+      return tile.type === "laser" ? (
+        <LaserTile tile={tile} orientation={orientation} />
+      ) : (
+        <DoorTile tile={tile} orientation={orientation} />
+      );
+    }
 
     case "collectible":
       return <CollectibleTile tile={tile} />;
 
     case "enemy":
-      return <EnemyTile tile={tile} />;
+      return null; // Enemy tiles are rendered separately in the Maze component.
 
     case "trigger":
       return <TriggerTile tile={tile} />;
@@ -249,7 +381,10 @@ function SpecialTile({ tile }: { tile: MazeTile }) {
   }
 }
 
-export default function MazeTiles({ maze }: MazeTilesProps) {
+export default function MazeTiles({
+  maze,
+  enemyPositions,
+}: MazeTilesProps) {
   return (
     <>
       {maze.tiles.map((tile) => (
@@ -294,9 +429,21 @@ export default function MazeTiles({ maze }: MazeTilesProps) {
             </mesh>
           )}
 
-          <SpecialTile tile={tile} />
+          <SpecialTile tile={tile} maze={maze} />
         </group>
       ))}
+
+      {/* Render moving enemy bots */}
+      {enemyPositions.map((enemy) => (
+        <EnemyTile
+          key={enemy.id}
+          x={enemy.x}
+          z={enemy.z}
+          facing={enemy.facing}
+          alerted={enemy.alerted}
+        />
+      ))}
+      
     </>
   );
 }

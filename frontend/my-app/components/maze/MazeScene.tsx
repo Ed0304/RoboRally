@@ -1,17 +1,30 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
 import type { LevelData } from "@/lib/levels";
 import { buildMaze } from "@/lib/maze";
-import { moveRobot, type RobotState } from "@/lib/gamelogic";
-
+import {
+  advanceEnemies,
+  createEnemies,
+  validatePatrolRoutes,
+  type EnemyPosition,
+  isRobotDetected,
+} from "@/lib/enemyAI";
+import { ENEMY_PATROLS } from "@/lib/enemyRoutes";
 import MazeTiles from "./MazeTiles";
 import Robot from "./Robot";
 import Compass from "./Compass";
+
+import {
+  moveRobot,
+  checkGameStatus,
+  type RobotState,
+  type GameStatus,
+} from "@/lib/gamelogic";
 
 interface MazeSceneProps {
   level: LevelData;
@@ -22,17 +35,104 @@ export default function MazeScene({ level }: MazeSceneProps) {
 }
 
 function LoadedMazeScene({ level }: { level: LevelData }) {
+  
   const maze = useMemo(() => buildMaze(level), [level]);
+
+  const routes = useMemo(
+    () => ENEMY_PATROLS[level.id] ?? [],
+    [level.id]
+  );
+
+  const routeErrors = useMemo(
+    () => validatePatrolRoutes(routes, maze),
+    [routes, maze]
+  );
 
   const [robotState, setRobotState] = useState<RobotState>(() => ({
     ...maze.start,
     direction: "south",
   }));
 
-  const won =
-    robotState.x === maze.exit.x &&
-    robotState.z === maze.exit.z;
+  const [enemyPositions, setEnemyPositions] = useState<EnemyPosition[]>(
+    () => createEnemies(routes, maze)
+  );
 
+  const [status, setStatus] = useState<GameStatus>("playing");
+
+  // Refs let the patrol timer access the latest positions.
+  const robotRef = useRef(robotState);
+  const enemiesRef = useRef(enemyPositions);
+
+  const won = status === "won";
+  const dead = status === "dead";
+
+  useEffect(() => {
+    robotRef.current = robotState;
+  }, [robotState]);
+
+  useEffect(() => {
+    enemiesRef.current = enemyPositions;
+  }, [enemyPositions]);
+
+  useEffect(() => {
+    if (routeErrors.length > 0) {
+      console.error(
+        `[RoboRally] Invalid patrol routes for level ${level.id}:`,
+        routeErrors
+      );
+    }
+  }, [level.id, routeErrors]);
+
+  const displayedEnemies = enemyPositions.map((enemy) => {
+  const alerted = isRobotDetected(robotState, [enemy], maze, 2);
+
+  let facing = enemy.facing;
+
+  if (alerted) {
+    const dx = robotState.x - enemy.x;
+    const dz = robotState.z - enemy.z;
+
+    if (Math.abs(dx) > Math.abs(dz)) {
+      facing = dx > 0 ? "east" : "west";
+    } else if (dz !== 0) {
+      facing = dz > 0 ? "south" : "north";
+    } else if (dx !== 0) {
+      facing = dx > 0 ? "east" : "west";
+    }
+  }
+
+  return { ...enemy, facing, alerted };
+});
+
+  // Move patrol enemies once every 800 ms.
+  useEffect(() => {
+    if (status !== "playing") return;
+
+    const timer = window.setInterval(() => {
+      const nextEnemies = advanceEnemies(
+        enemiesRef.current,
+        routes,
+        maze
+      );
+
+      enemiesRef.current = nextEnemies;
+      setEnemyPositions(nextEnemies);
+
+      const nextStatus = checkGameStatus(
+        robotRef.current,
+        maze,
+        nextEnemies
+      );
+
+      if (nextStatus !== "playing") {
+        setStatus(nextStatus);
+      }
+    }, 800);
+
+    return () => window.clearInterval(timer);
+  }, [status, routes, maze]);
+
+  // Robot controls and collision/detection checks.
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       const key = event.key.toLowerCase();
@@ -50,13 +150,28 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
       const direction = directions[key];
 
-      if (!direction || won) return;
+      if (!direction || status !== "playing") return;
 
       event.preventDefault();
 
-      setRobotState((current) =>
-        moveRobot(current, direction, maze)
+      const nextRobot = moveRobot(
+        robotRef.current,
+        direction,
+        maze
       );
+
+      robotRef.current = nextRobot;
+      setRobotState(nextRobot);
+
+      const nextStatus = checkGameStatus(
+        nextRobot,
+        maze,
+        enemiesRef.current
+      );
+
+      if (nextStatus !== "playing") {
+        setStatus(nextStatus);
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -64,13 +179,22 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [maze, won]);
+  }, [maze, status]);
 
   function restart() {
-    setRobotState({
+    const initialRobot: RobotState = {
       ...maze.start,
       direction: "south",
-    });
+    };
+
+    const initialEnemies = createEnemies(routes, maze);
+
+    robotRef.current = initialRobot;
+    enemiesRef.current = initialEnemies;
+
+    setRobotState(initialRobot);
+    setEnemyPositions(initialEnemies);
+    setStatus("playing");
   }
 
   return (
@@ -100,7 +224,10 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
             -maze.depth / 2 + 0.5,
           ]}
         >
-          <MazeTiles maze={maze} />
+          <MazeTiles
+            maze={maze}
+            enemyPositions={displayedEnemies}
+          />
           <Robot state={robotState} />
         </group>
 
@@ -129,9 +256,19 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           Move: WASD or arrow keys
         </p>
 
+        <p className="mt-1 text-xs text-[#9299A6]">
+          Patrol units: {enemyPositions.length}
+        </p>
+
         {won && (
           <p className="mt-3 font-bold text-[#65D982]">
             Level completed!
+          </p>
+        )}
+
+        {dead && (
+          <p className="mt-3 font-bold text-[#FF7979]">
+            ROBOT DESTROYED — MISSION FAILED
           </p>
         )}
 

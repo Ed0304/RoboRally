@@ -22,7 +22,7 @@ export const TILE_MAPPING: Record<
   E:  { type: "exit", blocksMovement: false },
   L:  { type: "laser", blocksMovement: false },
   C:  { type: "collectible", blocksMovement: false },
-  R:  { type: "enemy", blocksMovement: true },
+  R:  { type: "enemy", blocksMovement: false },
   D:  { type: "door", blocksMovement: true },
   "!": { type: "trigger", blocksMovement: false },
 };
