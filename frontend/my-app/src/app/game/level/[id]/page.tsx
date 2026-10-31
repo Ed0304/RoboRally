@@ -242,7 +242,7 @@ function GameLevelContent() {
             </div>
           ) : (
             <div className="p-2 sm:p-4 lg:p-5">
-              <MazeScene level={level} />
+              <MazeScene level={level} showPreview={level.type === "Tutorial"} />
             </div>
           )}
 

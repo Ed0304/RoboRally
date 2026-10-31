@@ -18,6 +18,8 @@ interface MazeTilesProps {
   maze: MazeDefinition;
   enemyPositions: DisplayEnemy[];
   doorOpen: boolean;
+  /** Route-preview cells as 'x,z' keys; rendered as markers only. */
+  previewRoute?: ReadonlySet<string>;
 }
 
 type BarrierOrientation = "horizontal" | "vertical";
@@ -486,6 +488,7 @@ export default function MazeTiles({
   maze,
   enemyPositions,
   doorOpen,
+  previewRoute,
 }: MazeTilesProps) {
   return (
     <>
@@ -530,6 +533,19 @@ export default function MazeTiles({
               />
             </mesh>
           )}
+
+          {/* Route preview marker (visual only, never moves the robot) */}
+          {previewRoute?.has(`${tile.x},${tile.z}`) &&
+            tile.type !== 'wall' && (
+              <mesh position={[tile.x, 0.12, tile.z]}>
+                <octahedronGeometry args={[0.18]} />
+                <meshStandardMaterial
+                  color='#22D3EE'
+                  emissive='#0EA5E9'
+                  emissiveIntensity={1.1}
+                />
+              </mesh>
+            )}
 
           <SpecialTile
             tile={tile}

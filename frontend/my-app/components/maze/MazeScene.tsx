@@ -4,8 +4,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { Canvas } from "@react-three/fiber";
-import { OrbitControls } from "@react-three/drei";
+import { Canvas, useThree } from "@react-three/fiber";
+import type { OrthographicCamera } from "three";
 
 import type { LevelData } from "@/lib/levels";
 import { buildMaze } from "@/lib/maze";
@@ -28,6 +28,20 @@ import {
   type RobotState,
   type GameStatus,
 } from "@/lib/gamelogic";
+import {
+  planRoute,
+  previewOptionsFor,
+  type SearchStrategy,
+} from "@/lib/pathfinding";
+import {
+  BATTERY_MAX,
+  DEFAULT_COSTS,
+  canAfford,
+  deductBattery,
+  estimatePlanCost,
+  moveCost,
+  stepDestination,
+} from "@/lib/battery";
 import type { PlanAction } from "@/lib/agent";
 import {
   EXEC_STEP_DELAY_MS,
@@ -44,6 +58,8 @@ import {
 
 interface MazeSceneProps {
   level: LevelData;
+  /** Tutorial-only route preview; never moves the robot. */
+  showPreview?: boolean;
 }
 
 
@@ -52,11 +68,40 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function MazeScene({ level }: MazeSceneProps) {
-  return <LoadedMazeScene key={level.id} level={level} />;
+export default function MazeScene({ level, showPreview = false }: MazeSceneProps) {
+  return <LoadedMazeScene key={level.id} level={level} showPreview={showPreview} />;
 }
 
-function LoadedMazeScene({ level }: { level: LevelData }) {
+// Constant top-down view: screen-up is world -Z (North) and
+// screen-right is world +X (East), matching the compass. Change this
+// single constant to rotate the view if needed.
+const TOP_DOWN_UP: [number, number, number] = [0, 0, -1];
+
+// Fit the whole maze in view: R3F's orthographic camera covers one
+// world unit per pixel at zoom 1, so zoom = pixels per tile needed
+// to fit the maze plus a one-tile margin on every side.
+function FitMazeToView({ width, depth }: { width: number; depth: number }) {
+  const camera = useThree((state) => state.camera) as OrthographicCamera;
+  const size = useThree((state) => state.size);
+
+  useEffect(() => {
+    camera.zoom = Math.min(
+      size.width / (width + 2),
+      size.height / (depth + 2)
+    );
+    camera.updateProjectionMatrix();
+  }, [camera, size, width, depth]);
+
+  return null;
+}
+
+function LoadedMazeScene({
+  level,
+  showPreview = false,
+}: {
+  level: LevelData;
+  showPreview?: boolean;
+}) {
 
   const maze = useMemo(() => buildMaze(level), [level]);
 
@@ -81,6 +126,11 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
   const [status, setStatus] = useState<GameStatus>("playing");
   const [doorOpen, setDoorOpen] = useState(false);
+  const [preview, setPreview] = useState<{ cells: Set<string>; steps: number; cost: number; strategy: SearchStrategy } | null>(null);
+  const [algorithm, setAlgorithm] = useState<SearchStrategy>("bfs");
+  const [battery, setBattery] = useState(BATTERY_MAX);
+  const batteryRef = useRef(BATTERY_MAX);
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
 
   // Refs let the patrol timer and plan executor access latest state.
   const robotRef = useRef(robotState);
@@ -266,6 +316,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
   async function executePlan(actions: PlanAction[]) {
     if (execRunningRef.current) return;
+    clearRoutePreview();
 
     if (statusRef.current !== "playing") {
       setExecution({
@@ -283,6 +334,24 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
         currentIndex: 0,
         total: 0,
         message: "Nothing to execute.",
+      });
+      return;
+    }
+
+    const estimate = estimatePlanCost(
+      actions.map((action) => action.direction),
+      { x: robotRef.current.x, z: robotRef.current.z },
+      maze,
+      doorOpenRef.current,
+      DEFAULT_COSTS
+    );
+
+    if (!canAfford(batteryRef.current, estimate.cost)) {
+      setExecution({
+        running: false,
+        currentIndex: 0,
+        total: actions.length,
+        message: `Plan needs approx. ${estimate.cost}% battery but only ${batteryRef.current}% remains. Restart to recharge.`,
       });
       return;
     }
@@ -347,6 +416,19 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           return;
         }
 
+        const dest = stepDestination(expected.x, expected.z, actions[index].direction);
+        const stepCost = moveCost(DEFAULT_COSTS, dest.x, dest.z);
+
+        if (!canAfford(batteryRef.current, stepCost)) {
+          finish({
+            running: false,
+            currentIndex: index,
+            total: actions.length,
+            message: `Battery depleted at step ${index + 1} — ${batteryRef.current}% left, step needs ${stepCost}%. Restart to recharge.`,
+          });
+          return;
+        }
+
         const result = attemptMove(actions[index].direction);
 
         if (result.status !== "playing") {
@@ -374,6 +456,9 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           return;
         }
 
+        batteryRef.current = deductBattery(batteryRef.current, stepCost);
+        setBattery(batteryRef.current);
+
         expected = {
           x: robotRef.current.x,
           z: robotRef.current.z,
@@ -391,8 +476,37 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     }
   }
 
+  function showRoutePreview() {
+    const result = planRoute(
+      maze,
+      { x: robotRef.current.x, z: robotRef.current.z },
+      maze.exit,
+      { ...previewOptionsFor(maze), strategy: algorithm, costs: DEFAULT_COSTS }
+    );
+
+    if (!result.reached) {
+      setPreview(null);
+      setPreviewMessage(result.reason);
+      return;
+    }
+
+    setPreview({
+      cells: new Set(result.path.map((cell) => `${cell.x},${cell.z}`)),
+      steps: result.moves,
+      cost: result.cost,
+      strategy: algorithm,
+    });
+    setPreviewMessage(null);
+  }
+
+  function clearRoutePreview() {
+    setPreview(null);
+    setPreviewMessage(null);
+  }
+
   function restart() {
     execCancelRef.current = true;
+    clearRoutePreview();
 
     const initialRobot: RobotState = {
       ...maze.start,
@@ -401,6 +515,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
     const initialEnemies = createEnemies(routes, maze);
 
+    batteryRef.current = BATTERY_MAX;
     robotRef.current = initialRobot;
     enemiesRef.current = initialEnemies;
     statusRef.current = "playing";
@@ -409,75 +524,14 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     setRobotState(initialRobot);
     setEnemyPositions(initialEnemies);
     setStatus("playing");
+    setBattery(BATTERY_MAX);
     setDoorOpen(false);
     setExecution(IDLE_EXECUTION);
   }
 
   return (
-    <div className="relative flex h-[650px] flex-col items-center overflow-hidden rounded-lg border border-[#3B414B] bg-[#191C22] shadow-inner">
-    <Compass direction={robotState.direction} />
-    <div className="pointer-events-none absolute inset-x-0 top-6 z-50 flex justify-center">
-    <div
-      className={`rounded-lg border border-cyan-400/50 bg-slate-950/90 px-6 py-3 text-center shadow-[0_0_24px_rgba(34,211,238,0.2)] backdrop-blur-sm transition-all duration-500 ${
-        showDoorUnlocked
-          ? "translate-y-0 opacity-100"
-          : "-translate-y-3 opacity-0"
-      }`}
-      aria-live="polite"
-      aria-atomic="true"
-    >
-      <p className="font-bold tracking-[0.2em] text-emerald-300">
-        🔓 DOOR UNLOCKED
-      </p>
-      <p className="mt-1 text-sm text-slate-300">
-        Security lock disengaged. Exit access granted.
-      </p>
-    </div>
-  </div>
-      <Canvas
-        shadows
-        orthographic
-        camera={{
-          position: [10, 12, 10],
-          zoom: 55,
-          near: 0.1,
-          far: 100,
-        }}
-      >
-        <ambientLight intensity={1.2} />
-
-        <directionalLight
-          position={[8, 12, 6]}
-          intensity={2}
-          castShadow
-        />
-
-        <group
-          position={[
-            -maze.width / 2 + 0.5,
-            0,
-            -maze.depth / 2 + 0.5,
-          ]}
-        >
-          <MazeTiles
-            maze={maze}
-            enemyPositions={displayedEnemies}
-            doorOpen={doorOpen}
-          />
-          <Robot state={robotState} />
-        </group>
-
-        <OrbitControls
-          target={[0, 0, 0]}
-          enablePan={false}
-          minPolarAngle={0.2}
-          maxPolarAngle={Math.PI / 2.1}
-        />
-      </Canvas>
-
-
-
-      <div className="absolute left-4 top-4 max-w-[calc(100%-2rem)] rounded-lg border border-[#3B414B] bg-[#191C22]/95 p-4 text-[#F3F0E8] shadow-xl backdrop-blur-sm">
+    <div className="flex flex-col overflow-hidden rounded-lg border border-[#3B414B] bg-[#191C22] shadow-inner">
+    <div className="w-full border-b border-[#3B414B] bg-[#191C22] p-4 text-[#F3F0E8]">
         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#F2A93B]">
           Mission Status
         </p>
@@ -486,6 +540,10 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
         <p className="mt-2 text-sm text-[#ADB2BD]">
           Position: ({robotState.x}, {robotState.z})
+        </p>
+
+        <p className={`mt-2 text-sm ${battery <= 20 ? "text-[#FF7979]" : "text-[#ADB2BD]"}`}>
+          Battery: {battery}%
         </p>
 
         <p className="mt-2 text-xs text-[#9299A6]">
@@ -520,6 +578,52 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           Restart
         </button>
 
+        {showPreview && status === "playing" && (
+          <label className="mt-3 block text-xs text-[#ADB2BD]">
+            Planning algorithm
+            <select
+              value={algorithm}
+              onChange={(event) => {
+                setAlgorithm(event.target.value as SearchStrategy);
+                clearRoutePreview();
+              }}
+              className="mt-1 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-2 py-2 text-sm text-[#F3F0E8]"
+            >
+              <option value="bfs">BFS — fewest moves</option>
+              <option value="dijkstra">Dijkstra — lowest battery cost</option>
+              <option value="astar">A* — lowest battery cost (guided)</option>
+            </select>
+          </label>
+        )}
+
+        {showPreview && status === "playing" && !preview && (
+          <button
+            onClick={showRoutePreview}
+            className="mt-3 w-full rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+          >
+            Preview Route
+          </button>
+        )}
+
+        {showPreview && status === "playing" && preview && (
+          <button
+            onClick={clearRoutePreview}
+            className="mt-3 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-medium text-[#F3F0E8] transition hover:border-cyan-400/50"
+          >
+            Clear Preview
+          </button>
+        )}
+
+        {showPreview && preview && (
+          <p className="mt-2 text-xs text-cyan-200/90">
+            {preview.strategy === "bfs" ? "BFS" : preview.strategy === "dijkstra" ? "Dijkstra" : "A*"} preview: {preview.steps} {preview.steps === 1 ? "step" : "steps"} · approx. {preview.cost}% battery from here. Preview only — the robot does not move until you execute a plan.
+          </p>
+        )}
+
+        {showPreview && previewMessage && (
+          <p className="mt-2 text-xs text-[#FFB020]">{previewMessage}</p>
+        )}
+
         <MissionPanel
           levelId={level.id}
           getSnapshot={() => ({
@@ -539,7 +643,76 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
           onExecute={executePlan}
           onStop={() => stopExecution()}
         />
+    </div>
+    <div className="relative h-[520px] w-full">
+      <div className="pointer-events-none absolute right-4 top-4 z-10">
+        <Compass direction={robotState.direction} />
       </div>
+      <div className="pointer-events-none absolute inset-x-0 top-6 z-50 flex justify-center">
+    <div
+      className={`rounded-lg border border-cyan-400/50 bg-slate-950/90 px-6 py-3 text-center shadow-[0_0_24px_rgba(34,211,238,0.2)] backdrop-blur-sm transition-all duration-500 ${
+        showDoorUnlocked
+          ? "translate-y-0 opacity-100"
+          : "-translate-y-3 opacity-0"
+      }`}
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <p className="font-bold tracking-[0.2em] text-emerald-300">
+        🔓 DOOR UNLOCKED
+      </p>
+      <p className="mt-1 text-sm text-slate-300">
+        Security lock disengaged. Exit access granted.
+      </p>
+    </div>
+  </div>
+      <Canvas
+        shadows
+        orthographic
+        onCreated={({ camera }) => {
+          camera.up.set(...TOP_DOWN_UP);
+          camera.position.set(0, 20, 0);
+          camera.lookAt(0, 0, 0);
+        }}
+        camera={{
+          position: [0, 20, 0],
+          zoom: 55,
+          near: 0.1,
+          far: 100,
+        }}
+      >
+        <FitMazeToView width={maze.width} depth={maze.depth} />
+
+        <ambientLight intensity={1.2} />
+
+        <directionalLight
+          position={[8, 12, 6]}
+          intensity={2}
+          castShadow
+        />
+
+        <group
+          position={[
+            -maze.width / 2 + 0.5,
+            0,
+            -maze.depth / 2 + 0.5,
+          ]}
+        >
+          <MazeTiles
+            maze={maze}
+            enemyPositions={displayedEnemies}
+            doorOpen={doorOpen}
+            previewRoute={preview?.cells}
+          />
+          <Robot state={robotState} />
+        </group>
+
+      </Canvas>
+    </div>
+
+
+
+
     </div>
   );
 }

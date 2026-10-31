@@ -9,6 +9,7 @@ import { usePathname, useRouter } from "next/navigation";
 const publicLinks = [
   { label: "Home", href: "/" },
   { label: "How to Play", href: "/howtoplay" },
+  { label: "Learn BFS", href: "/learn" },
   { label: "Profile", href: "/playerdetails" }
 ];
 
