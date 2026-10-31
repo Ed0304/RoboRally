@@ -61,6 +61,8 @@ def register_account(
         "email": email,
         "email_normalized": email_normalized,
         "password_hash": password_hash,
+        "completed_levels": [],
+        "prompt_history": [],
         "created_at": datetime.now(timezone.utc),
     }
 

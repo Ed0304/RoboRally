@@ -36,7 +36,7 @@ const steps = [
     number: "06",
     title: "Adapt and complete the mission",
     description:
-      "If the original plan no longer works, the agent can plan again based on the latest state. Keep working toward the objective.",
+      "If the original plan no longer works, request a new plan based on the latest state. Keep working toward the objective.",
   },
 ];
 
@@ -103,6 +103,11 @@ export default function HowtoPlayPage() {
             <li>
               <span className="mr-2 font-bold text-accent">›</span>
               Describe the outcome you want, not just a vague instruction.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              There are no manual controls: every move is made by the
+              AI agent carrying out your validated plan.
             </li>
             <li>
               <span className="mr-2 font-bold text-accent">›</span>

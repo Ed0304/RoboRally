@@ -108,7 +108,12 @@ def get_current_user(request: Request) -> dict:
 
     user = users_collection.find_one(
         {"_id": ObjectId(user_id)},
-        {"username": 1, "email": 1},
+        {
+            "username": 1,
+            "email": 1,
+            "completed_levels": 1,
+            "prompt_history": 1,
+        },
     )
 
     if user is None:
@@ -121,4 +126,7 @@ def get_current_user(request: Request) -> dict:
         "id": str(user["_id"]),
         "username": user["username"],
         "email": user["email"],
+        # New fields default for records created before they existed.
+        "completed_levels": user.get("completed_levels") or [],
+        "prompt_history": user.get("prompt_history") or [],
     }

@@ -1,16 +1,39 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import MazeScene from "../../../../../components/maze/MazeScene";
 import type { ApiLevel } from "../../../../lib/apilevels";
+import {
+  isLevelUnlocked,
+  loadProgress,
+} from "../../../../lib/progress";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+
 export default function GameLevelPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-[calc(100vh-88px)] items-center justify-center px-6 py-12 text-[#F3F0E8]">
+          <p className="text-sm text-[#A4A9B4]">Loading factory level...</p>
+        </main>
+      }
+    >
+      <GameLevelContent />
+    </Suspense>
+  );
+}
+
+function GameLevelContent() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const [level, setLevel] = useState<ApiLevel | null>(null);
   const [loading, setLoading] = useState(true);
@@ -116,9 +139,21 @@ export default function GameLevelPage() {
     );
   }
 
+  const menuHref =
+    level.type === "Tutorial" ? "/start/tutorial" : "/start/story";
+  const locked = !isLevelUnlocked(loadProgress(userId), level.id);
+
   return (
     <main className="min-h-screen px-4 pb-12 pt-6 text-[#F3F0E8] sm:px-6 lg:px-10">
       <div className="mx-auto max-w-[1440px]">
+        <Link
+          href={menuHref}
+          className="mb-4 inline-flex items-center gap-2 rounded-md border border-[#3B414B] bg-[#191C22] px-4 py-2 text-sm font-semibold text-[#F3F0E8] transition hover:border-[#F2A93B] hover:text-[#F2A93B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#F2A93B]"
+        >
+          <span aria-hidden="true">←</span>
+          Back to Menu
+        </Link>
+
         {/* Mission briefing */}
         <header className="mb-5 flex flex-col gap-5 rounded-xl border border-[#34383F] bg-[#191C22] p-5 shadow-lg sm:p-7 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
@@ -182,9 +217,34 @@ export default function GameLevelPage() {
             </span>
           </div>
 
-          <div className="p-2 sm:p-4 lg:p-5">
-            <MazeScene level={level} />
-          </div>
+          {locked ? (
+            <div className="p-8 text-center sm:p-12">
+              <p className="text-xs font-semibold uppercase tracking-[0.25em] text-[#9299A6]">
+                Mission Locked
+              </p>
+
+              <h3 className="mt-3 text-xl font-bold">
+                Complete the previous mission first
+              </h3>
+
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#ADB2BD]">
+                This sector is still sealed. Work through the earlier
+                missions to unlock it.
+              </p>
+
+              <Link
+                href={menuHref}
+                className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#F2A93B] px-5 py-3 font-semibold text-[#17191D] transition hover:bg-[#FFC15B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2A93B]"
+              >
+                <span aria-hidden="true">←</span>
+                Back to Menu
+              </Link>
+            </div>
+          ) : (
+            <div className="p-2 sm:p-4 lg:p-5">
+              <MazeScene level={level} />
+            </div>
+          )}
 
           <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#34383F] bg-[#20242B] px-5 py-3">
             <p className="text-xs text-[#9299A6]">

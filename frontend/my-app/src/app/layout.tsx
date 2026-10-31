@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Header from "../../components/header";
@@ -34,7 +35,9 @@ export default function RootLayout({ children }: {children: React.ReactNode}) {
     >
       <body className="min-h-full flex flex-col">
         <AuthWrapper>
-        <Header/>
+        <Suspense fallback={null}>
+          <Header />
+        </Suspense>
         {children}
         <Footer/>
         </AuthWrapper>

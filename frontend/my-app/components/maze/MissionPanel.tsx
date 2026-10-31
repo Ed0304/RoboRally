@@ -9,6 +9,7 @@ import {
   type PlanResponse,
 } from "@/lib/agent";
 import type { ExecutionState } from "@/lib/execution";
+import { recordPromptAttempt } from "@/lib/user";
 
 export interface MissionSnapshot {
   robot: { x: number; z: number; direction: PlanDirection };
@@ -53,6 +54,11 @@ export default function MissionPanel({
     setError("");
     setPlan(null);
 
+    // History rule: Success means the planner returned at least one
+    // approved action. Errors, empty plans, and failures before the
+    // model (network/HTTP) are Failed attempts. Blocked empty input is
+    // not an attempt and is never recorded. One call site per request,
+    // so retries cannot duplicate entries.
     try {
       const response = await requestPlan({
         level_id: levelId,
@@ -63,12 +69,17 @@ export default function MissionPanel({
       });
 
       setPlan(response);
+      recordPromptAttempt(
+        mission.trim(),
+        response.actions.length > 0 ? "Success" : "Failed"
+      ).catch(() => {});
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
           : "Planning failed. Please try again."
       );
+      recordPromptAttempt(mission.trim(), "Failed").catch(() => {});
     } finally {
       setLoading(false);
     }

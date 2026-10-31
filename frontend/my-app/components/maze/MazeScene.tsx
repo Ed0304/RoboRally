@@ -2,6 +2,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
@@ -34,6 +36,11 @@ import {
   verifyStepPrereqs,
   type ExecutionState,
 } from "@/lib/execution";
+import {
+  completeLevel,
+  getNextLevelId,
+  pushCompletion,
+} from "@/lib/progress";
 
 interface MazeSceneProps {
   level: LevelData;
@@ -83,12 +90,17 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
   const won = status === "won";
   const dead = status === "dead";
+  const nextLevelId = getNextLevelId(level.id);
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const [showDoorUnlocked, setShowDoorUnlocked] = useState(false);
   const [execution, setExecution] =
     useState<ExecutionState>(IDLE_EXECUTION);
   const execCancelRef = useRef(false);
   const execRunningRef = useRef(false);
+  const completionSavedRef = useRef(false);
+  const router = useRouter();
 
   useEffect(() => {
     robotRef.current = robotState;
@@ -130,6 +142,20 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
       execCancelRef.current = true;
     };
   }, []);
+
+  // Record completion once, scoped to the signed-in account (or the
+  // guest namespace when signed out). Guests never upload: their wins
+  // stay on this device until they play signed in.
+  useEffect(() => {
+    if (status === "won" && !completionSavedRef.current) {
+      completionSavedRef.current = true;
+      completeLevel(level.id, userId);
+
+      if (userId !== null) {
+        pushCompletion(level.id).catch(() => {});
+      }
+    }
+  }, [status, level.id, userId]);
 
   const displayedEnemies = enemyPositions.map((enemy) => {
   const alerted = isRobotDetected(robotState, [enemy], maze, 2);
@@ -230,37 +256,9 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     [maze]
   );
 
-  // Robot controls and collision/detection checks.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      const key = event.key.toLowerCase();
-
-      const directions: Record<string, RobotState["direction"]> = {
-        w: "north",
-        arrowup: "north",
-        s: "south",
-        arrowdown: "south",
-        a: "west",
-        arrowleft: "west",
-        d: "east",
-        arrowright: "east",
-      };
-
-      const direction = directions[key];
-
-      if (!direction || statusRef.current !== "playing") return;
-
-      event.preventDefault();
-      attemptMove(direction);
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [attemptMove]);
-
+  // No manual controls: the AI agent is the sole driver. All movement
+  // flows through attemptMove via executePlan, so every step is a
+  // validated plan action and keys are always free for typing.
   function stopExecution(message = "Execution stopped.") {
     execCancelRef.current = true;
     setExecution((prev) => ({ ...prev, running: false, message }));
@@ -491,13 +489,22 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
         </p>
 
         <p className="mt-2 text-xs text-[#9299A6]">
-          Move: WASD or arrow keys
+          Control: AI agent only
         </p>
 
         {won && (
           <p className="mt-3 font-bold text-[#65D982]">
             Level completed!
           </p>
+        )}
+
+        {won && nextLevelId !== null && (
+          <button
+            onClick={() => router.push(`/game/level/${nextLevelId}`)}
+            className="mt-3 w-full rounded-md bg-[#F2A93B] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#FFC15B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2A93B]"
+          >
+            Next Level →
+          </button>
         )}
 
         {dead && (

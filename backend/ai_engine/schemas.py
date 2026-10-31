@@ -58,6 +58,15 @@ class ActionPlan(BaseModel):
     reasoning: str = Field(max_length=2000)
 
 
+class ActionSegment(BaseModel):
+    """Action-only segment output: the model returns moves, and the
+    planner synthesizes display text server-side."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actions: list[Action] = Field(min_length=1, max_length=MAX_ACTIONS)
+
+
 class RejectedAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

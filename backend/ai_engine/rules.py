@@ -17,6 +17,8 @@ Deliberately NOT mirrored (documented limitations):
   engine either (win = reach exit), so plans cannot rely on them.
 """
 
+from typing import NamedTuple
+
 from ai_engine.meta_client import PlannerError
 from ai_engine.schemas import Action, RejectedAction
 
@@ -31,8 +33,17 @@ WALL = "#"
 DOOR = "D"
 LASER = "L"
 TRIGGER = "!"
+EXIT = "E"
 
 KNOWN_SYMBOLS = set("#.SELCRD!")
+
+
+class SimResult(NamedTuple):
+    approved: list[Action]
+    rejected: list[RejectedAction]
+    end_x: int
+    end_z: int
+    doors_open: bool
 
 
 def parse_layout(layout: list[str]) -> dict[tuple[int, int], str]:
@@ -58,19 +69,35 @@ def parse_layout(layout: list[str]) -> dict[tuple[int, int], str]:
     return tiles
 
 
+def find_exit(layout: list[str]) -> tuple[int, int]:
+    """Locate the exit tile; level data must contain exactly one."""
+    tiles = parse_layout(layout)
+    exits = [
+        (x, z) for (x, z), symbol in tiles.items() if symbol == EXIT
+    ]
+
+    if len(exits) != 1:
+        raise PlannerError(
+            "Level data is invalid: expected exactly one exit tile."
+        )
+
+    return exits[0]
+
+
 def simulate(
     layout: list[str],
     robot: dict[str, int],
     door_open: bool,
     enemies: list[dict[str, int]],
     actions: list[Action],
-) -> tuple[list[Action], list[RejectedAction]]:
+) -> SimResult:
     """Walk the plan step by step from the reported state.
 
     Blocked steps leave the robot in place (matching ``moveRobot``) and
     are recorded with reasons; later steps are still evaluated from the
     resulting position. Landing on a trigger opens doors for subsequent
-    steps (matching ``MazeScene``).
+    steps (matching ``MazeScene``). The end position and door state let
+    chained plan segments continue exactly where this one stopped.
     """
     tiles = parse_layout(layout)
     enemy_tiles = {(enemy["x"], enemy["z"]) for enemy in enemies}
@@ -153,4 +180,10 @@ def simulate(
         if symbol == TRIGGER:
             doors_open = True
 
-    return approved, rejected
+    return SimResult(
+        approved=approved,
+        rejected=rejected,
+        end_x=x,
+        end_z=z,
+        doors_open=doors_open,
+    )

@@ -83,8 +83,8 @@ export default function StartPage() {
         </section>
 
         <p className="mt-8 text-center text-xs leading-5 text-muted">
-          Game modes are selection UI for now. The gameplay routes and mission
-          logic will be implemented separately.
+          Complete missions to unlock new sectors. Your progress is saved
+          to your account.
         </p>
       </div>
     </main>
