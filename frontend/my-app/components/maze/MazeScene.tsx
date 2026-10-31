@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 
@@ -18,6 +18,7 @@ import { ENEMY_PATROLS } from "@/lib/enemyRoutes";
 import MazeTiles from "./MazeTiles";
 import Robot from "./Robot";
 import Compass from "./Compass";
+import MissionPanel from "./MissionPanel";
 
 import {
   moveRobot,
@@ -25,9 +26,23 @@ import {
   type RobotState,
   type GameStatus,
 } from "@/lib/gamelogic";
+import type { PlanAction } from "@/lib/agent";
+import {
+  EXEC_STEP_DELAY_MS,
+  IDLE_EXECUTION,
+  describeProgress,
+  verifyStepPrereqs,
+  type ExecutionState,
+} from "@/lib/execution";
 
 interface MazeSceneProps {
   level: LevelData;
+}
+
+
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export default function MazeScene({ level }: MazeSceneProps) {
@@ -35,7 +50,7 @@ export default function MazeScene({ level }: MazeSceneProps) {
 }
 
 function LoadedMazeScene({ level }: { level: LevelData }) {
-  
+
   const maze = useMemo(() => buildMaze(level), [level]);
 
   const routes = useMemo(
@@ -60,12 +75,20 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
   const [status, setStatus] = useState<GameStatus>("playing");
   const [doorOpen, setDoorOpen] = useState(false);
 
-  // Refs let the patrol timer access the latest positions.
+  // Refs let the patrol timer and plan executor access latest state.
   const robotRef = useRef(robotState);
   const enemiesRef = useRef(enemyPositions);
+  const statusRef = useRef(status);
+  const doorOpenRef = useRef(doorOpen);
 
   const won = status === "won";
   const dead = status === "dead";
+
+  const [showDoorUnlocked, setShowDoorUnlocked] = useState(false);
+  const [execution, setExecution] =
+    useState<ExecutionState>(IDLE_EXECUTION);
+  const execCancelRef = useRef(false);
+  const execRunningRef = useRef(false);
 
   useEffect(() => {
     robotRef.current = robotState;
@@ -76,6 +99,14 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
   }, [enemyPositions]);
 
   useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    doorOpenRef.current = doorOpen;
+  }, [doorOpen]);
+
+  useEffect(() => {
     if (routeErrors.length > 0) {
       console.error(
         `[RoboRally] Invalid patrol routes for level ${level.id}:`,
@@ -83,6 +114,22 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
       );
     }
   }, [level.id, routeErrors]);
+
+  useEffect(() => {
+    if (!showDoorUnlocked) return;
+
+    const timeout = setTimeout(() => {
+      setShowDoorUnlocked(false);
+    }, 2000);
+
+    return () => clearTimeout(timeout);
+  }, [showDoorUnlocked]);
+
+  useEffect(() => {
+    return () => {
+      execCancelRef.current = true;
+    };
+  }, []);
 
   const displayedEnemies = enemyPositions.map((enemy) => {
   const alerted = isRobotDetected(robotState, [enemy], maze, 2);
@@ -126,12 +173,62 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
       );
 
       if (nextStatus !== "playing") {
+        statusRef.current = nextStatus;
         setStatus(nextStatus);
       }
     }, 800);
 
     return () => window.clearInterval(timer);
   }, [status, routes, maze]);
+
+  // Single shared movement path for keyboard input and plan execution.
+  const attemptMove = useCallback(
+    (
+      direction: RobotState["direction"]
+    ): { moved: boolean; status: GameStatus } => {
+      const nextRobot = moveRobot(
+        robotRef.current,
+        direction,
+        maze,
+        doorOpenRef.current
+      );
+
+      const moved =
+        nextRobot.x !== robotRef.current.x ||
+        nextRobot.z !== robotRef.current.z;
+
+      const trigger = maze.tiles.find(
+        (tile) => tile.type === "trigger"
+      );
+
+      if (
+        trigger &&
+        nextRobot.x === trigger.x &&
+        nextRobot.z === trigger.z
+      ) {
+        doorOpenRef.current = true;
+        setDoorOpen(true);
+        setShowDoorUnlocked(true);
+      }
+
+      robotRef.current = nextRobot;
+      setRobotState(nextRobot);
+
+      const nextStatus = checkGameStatus(
+        nextRobot,
+        maze,
+        enemiesRef.current
+      );
+
+      if (nextStatus !== "playing") {
+        statusRef.current = nextStatus;
+        setStatus(nextStatus);
+      }
+
+      return { moved, status: statusRef.current };
+    },
+    [maze]
+  );
 
   // Robot controls and collision/detection checks.
   useEffect(() => {
@@ -151,41 +248,10 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
       const direction = directions[key];
 
-      if (!direction || status !== "playing") return;
+      if (!direction || statusRef.current !== "playing") return;
 
       event.preventDefault();
-
-      const nextRobot = moveRobot(
-        robotRef.current,
-        direction,
-        maze,
-        doorOpen
-      );
-
-      const trigger = maze.tiles.find(
-        (tile) => tile.type === "trigger"
-      );
-
-      if (
-        trigger &&
-        nextRobot.x === trigger.x &&
-        nextRobot.z === trigger.z
-      ) {
-        setDoorOpen(true);
-      }
-
-      robotRef.current = nextRobot;
-      setRobotState(nextRobot);
-
-      const nextStatus = checkGameStatus(
-        nextRobot,
-        maze,
-        enemiesRef.current
-      );
-
-      if (nextStatus !== "playing") {
-        setStatus(nextStatus);
-      }
+      attemptMove(direction);
     }
 
     window.addEventListener("keydown", handleKeyDown);
@@ -193,9 +259,143 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [maze, status, doorOpen]);
+  }, [attemptMove]);
+
+  function stopExecution(message = "Execution stopped.") {
+    execCancelRef.current = true;
+    setExecution((prev) => ({ ...prev, running: false, message }));
+  }
+
+  async function executePlan(actions: PlanAction[]) {
+    if (execRunningRef.current) return;
+
+    if (statusRef.current !== "playing") {
+      setExecution({
+        running: false,
+        currentIndex: 0,
+        total: actions.length,
+        message: "Start execution only while the mission is active.",
+      });
+      return;
+    }
+
+    if (actions.length === 0) {
+      setExecution({
+        running: false,
+        currentIndex: 0,
+        total: 0,
+        message: "Nothing to execute.",
+      });
+      return;
+    }
+
+    execRunningRef.current = true;
+    execCancelRef.current = false;
+
+    let expected = {
+      x: robotRef.current.x,
+      z: robotRef.current.z,
+    };
+
+    const finish = (state: ExecutionState) => {
+      setExecution(state);
+    };
+
+    try {
+      for (let index = 0; index < actions.length; index++) {
+        if (execCancelRef.current) return;
+
+        const verdict = verifyStepPrereqs({
+          status: statusRef.current,
+          expected,
+          actual: robotRef.current,
+        });
+
+        if (!verdict.ok) {
+          finish({
+            running: false,
+            currentIndex: index,
+            total: actions.length,
+            message: verdict.reason,
+          });
+          return;
+        }
+
+        finish({
+          running: true,
+          currentIndex: index,
+          total: actions.length,
+          message: describeProgress(index, actions.length),
+        });
+
+        await sleep(EXEC_STEP_DELAY_MS);
+
+        if (execCancelRef.current) return;
+
+        // Re-verify after the delay: enemies move on their own timer.
+        const recheck = verifyStepPrereqs({
+          status: statusRef.current,
+          expected,
+          actual: robotRef.current,
+        });
+
+        if (!recheck.ok) {
+          finish({
+            running: false,
+            currentIndex: index,
+            total: actions.length,
+            message: recheck.reason,
+          });
+          return;
+        }
+
+        const result = attemptMove(actions[index].direction);
+
+        if (result.status !== "playing") {
+          finish({
+            running: false,
+            currentIndex: index + 1,
+            total: actions.length,
+            message:
+              result.status === "won"
+                ? `Level completed in ${index + 1} step(s)!`
+                : `Robot destroyed on step ${index + 1}.`,
+          });
+          return;
+        }
+
+        if (!result.moved) {
+          finish({
+            running: false,
+            currentIndex: index,
+            total: actions.length,
+            message:
+              `Step ${index + 1} was blocked — the maze changed ` +
+              `since planning. Request a new plan.`,
+          });
+          return;
+        }
+
+        expected = {
+          x: robotRef.current.x,
+          z: robotRef.current.z,
+        };
+      }
+
+      finish({
+        running: false,
+        currentIndex: actions.length,
+        total: actions.length,
+        message: `Plan complete (${actions.length}/${actions.length} steps).`,
+      });
+    } finally {
+      execRunningRef.current = false;
+    }
+  }
 
   function restart() {
+    execCancelRef.current = true;
+
     const initialRobot: RobotState = {
       ...maze.start,
       direction: "south",
@@ -205,15 +405,37 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
     robotRef.current = initialRobot;
     enemiesRef.current = initialEnemies;
+    statusRef.current = "playing";
+    doorOpenRef.current = false;
 
     setRobotState(initialRobot);
     setEnemyPositions(initialEnemies);
     setStatus("playing");
     setDoorOpen(false);
+    setExecution(IDLE_EXECUTION);
   }
 
   return (
-    <div className="relative h-[650px] overflow-hidden rounded-lg border border-[#3B414B] bg-[#191C22] shadow-inner">
+    <div className="relative flex h-[650px] flex-col items-center overflow-hidden rounded-lg border border-[#3B414B] bg-[#191C22] shadow-inner">
+    <Compass direction={robotState.direction} />
+    <div className="pointer-events-none absolute inset-x-0 top-6 z-50 flex justify-center">
+    <div
+      className={`rounded-lg border border-cyan-400/50 bg-slate-950/90 px-6 py-3 text-center shadow-[0_0_24px_rgba(34,211,238,0.2)] backdrop-blur-sm transition-all duration-500 ${
+        showDoorUnlocked
+          ? "translate-y-0 opacity-100"
+          : "-translate-y-3 opacity-0"
+      }`}
+      aria-live="polite"
+      aria-atomic="true"
+    >
+      <p className="font-bold tracking-[0.2em] text-emerald-300">
+        🔓 DOOR UNLOCKED
+      </p>
+      <p className="mt-1 text-sm text-slate-300">
+        Security lock disengaged. Exit access granted.
+      </p>
+    </div>
+  </div>
       <Canvas
         shadows
         orthographic
@@ -255,7 +477,7 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
         />
       </Canvas>
 
-      <Compass direction={robotState.direction} />
+
 
       <div className="absolute left-4 top-4 max-w-[calc(100%-2rem)] rounded-lg border border-[#3B414B] bg-[#191C22]/95 p-4 text-[#F3F0E8] shadow-xl backdrop-blur-sm">
         <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#F2A93B]">
@@ -270,10 +492,6 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
 
         <p className="mt-2 text-xs text-[#9299A6]">
           Move: WASD or arrow keys
-        </p>
-
-        <p className="mt-1 text-xs text-[#9299A6]">
-          Patrol units: {enemyPositions.length}
         </p>
 
         {won && (
@@ -294,6 +512,26 @@ function LoadedMazeScene({ level }: { level: LevelData }) {
         >
           Restart
         </button>
+
+        <MissionPanel
+          levelId={level.id}
+          getSnapshot={() => ({
+            robot: {
+              x: robotState.x,
+              z: robotState.z,
+              direction: robotState.direction,
+            },
+            enemies: enemyPositions.map((enemy) => ({
+              x: enemy.x,
+              z: enemy.z,
+            })),
+            doorOpen,
+          })}
+          execution={execution}
+          canExecute={status === "playing"}
+          onExecute={executePlan}
+          onStop={() => stopExecution()}
+        />
       </div>
     </div>
   );

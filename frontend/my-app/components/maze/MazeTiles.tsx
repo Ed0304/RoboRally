@@ -2,7 +2,9 @@
 "use client";
 
 import type { MazeDefinition, MazeTile } from "@/lib/maze";
-
+import { useEffect, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import * as THREE from "three";
 import type {
   EnemyPosition,
   EnemyFacing,
@@ -265,6 +267,7 @@ function CollectibleTile({ tile }: { tile: MazeTile }) {
   );
 }
 
+
 function EnemyTile({
   x,
   z,
@@ -276,6 +279,13 @@ function EnemyTile({
   facing: EnemyFacing;
   alerted: boolean;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
+
+  const startPosition = useRef(new THREE.Vector3(x, 0, z));
+  const targetPosition = useRef(new THREE.Vector3(x, 0, z));
+  const elapsed = useRef(0);
+  const duration = 0.5;
+
   const yaw = {
     north: Math.PI,
     south: 0,
@@ -283,14 +293,57 @@ function EnemyTile({
     west: -Math.PI / 2,
   }[facing];
 
+  // Start a new movement transition whenever the grid position changes.
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    startPosition.current.copy(group.position);
+    targetPosition.current.set(x, 0, z);
+    elapsed.current = 0;
+  }, [x, z]);
+
+  useEffect(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    group.position.set(x, 0, z);
+    startPosition.current.set(x, 0, z);
+    targetPosition.current.set(x, 0, z);
+  }, []); 
+
+  // Smoothly interpolate the visual position between grid cells.
+  useFrame((_, delta) => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    if (elapsed.current >= duration) {
+      group.position.copy(targetPosition.current);
+      return;
+    }
+
+    elapsed.current = Math.min(
+      elapsed.current + delta,
+      duration
+    );
+
+    const progress = elapsed.current / duration;
+
+    // Ease in and out for smoother starts and stops.
+    const eased = progress * progress * (3 - 2 * progress);
+
+    group.position.lerpVectors(
+      startPosition.current,
+      targetPosition.current,
+      eased
+    );
+  });
+
   return (
-    <>
-      <group position={[x, 0, z]} rotation={[0, yaw, 0]}>
-        {/* Robot body */}
-        <mesh
-          position={[0, 0.32, 0]}
-          castShadow
-        >
+    <group ref={groupRef}>
+      {/* Robot body and directional sensor */}
+      <group rotation={[0, yaw, 0]}>
+        <mesh position={[0, 0.32, 0]} castShadow>
           <boxGeometry args={[0.66, 0.64, 0.66]} />
           <meshStandardMaterial
             color="#101216"
@@ -299,7 +352,6 @@ function EnemyTile({
           />
         </mesh>
 
-        {/* Forward-facing red sensor */}
         <mesh position={[0, 0.52, 0.337]}>
           <boxGeometry args={[0.68, 0.16, 0.045]} />
           <meshStandardMaterial
@@ -327,10 +379,9 @@ function EnemyTile({
         />
       </group>
 
-      {/* Alert marker stays upright regardless of robot rotation */}
+      {/* Alert marker moves with the robot but stays upright */}
       {alerted && (
-        <group position={[x, 1.05, z]}>
-          {/* Exclamation bar */}
+        <group position={[0, 1.05, 0]}>
           <mesh position={[0, 0.13, 0]}>
             <boxGeometry args={[0.12, 0.32, 0.12]} />
             <meshBasicMaterial
@@ -339,7 +390,6 @@ function EnemyTile({
             />
           </mesh>
 
-          {/* Exclamation dot */}
           <mesh position={[0, -0.1, 0]}>
             <sphereGeometry args={[0.075, 12, 12]} />
             <meshBasicMaterial
@@ -356,9 +406,10 @@ function EnemyTile({
           />
         </group>
       )}
-    </>
+    </group>
   );
 }
+
 
 
 function TriggerTile({
