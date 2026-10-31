@@ -23,16 +23,21 @@ from openai import (
 
 BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_MODEL = "muse-spark-1.3"
-REQUEST_TIMEOUT_SECONDS = 30.0
+REQUEST_TIMEOUT_SECONDS = 300.0
 # Per-call output budget. Well within the 1M-token context window;
-# worst-case cost ~$0.02 per call at $4.25/M output tokens.
-MAX_OUTPUT_TOKENS = 4000
+# worst-case cost ~$0.27 per call at $4.25/M output tokens.
 # Muse Spark is a reasoning model: hidden reasoning tokens share the
-# max_tokens budget with visible output, and omitted effort lets the
-# model burn the whole budget thinking (observed: out=4000, empty
-# content). "low" is the documented level for direct-answer tasks.
-# https://dev.meta.ai/docs/reasoning
-REASONING_EFFORT = "low"
+# max_tokens budget with visible output. Live evidence (Level 6, complex
+# waypoint mission): reasoning=3998/4000 with zero visible tokens at
+# effort "low". Decision: run effort "high" for the advanced reasoning
+# hard levels need, with headroom for a deep trace plus the visible
+# JSON (~300 tokens for 12 moves). Deliberately not uncapped: a stuck
+# model must still fail loudly instead of burning budget silently.
+MAX_OUTPUT_TOKENS = 64000
+# Reasoning effort: "low" (fast, cheap, less accurate), "medium"
+# (default), "high" (slow, expensive, more accurate).
+# Ref: https://dev.meta.ai/docs/structured-output#reasoning-effort
+REASONING_EFFORT = "high"
 
 # Sanitized diagnostics only: model ids, HTTP statuses, and shapes.
 # Never log API keys, headers, or full prompts here.
@@ -40,11 +45,18 @@ logger = logging.getLogger("roborally.ai_engine")
 
 
 class PlannerError(Exception):
-    """Safe, user-facing planner failure (no secrets, no tracebacks)."""
+    """Safe, user-facing planner failure (no secrets, no tracebacks).
 
-    def __init__(self, message: str, status_code: int = 502) -> None:
+    The short machine-readable ``code`` lets the planner decide whether a
+    bounded retry (e.g. after truncation) is worthwhile.
+    """
+
+    def __init__(
+        self, message: str, status_code: int = 502, code: str = "error"
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 class MissingCredentialsError(PlannerError):
@@ -78,13 +90,13 @@ def is_configured() -> bool:
     return True
 
 
-def get_client() -> OpenAI:
+def get_client(timeout: float = REQUEST_TIMEOUT_SECONDS) -> OpenAI:
     # The OpenAI SDK does not auto-read MODEL_API_KEY, so pass it
     # explicitly (per the official quickstart).
     return OpenAI(
         base_url=BASE_URL,
         api_key=get_api_key(),
-        timeout=REQUEST_TIMEOUT_SECONDS,
+        timeout=timeout,
         max_retries=1,
     )
 
@@ -151,6 +163,8 @@ def _summarize_usage(usage) -> str:
 # Segment calls request actions only: no free-form reasoning field,
 # capped at 12 moves. Minimal visible output keeps generation far below
 # the output budget; the planner synthesizes display text server-side.
+# The ``understood`` flag lets the model report gibberish missions
+# instead of hallucinating moves for them.
 SEGMENT_JSON_SCHEMA: dict = {
     "type": "object",
     "properties": {
@@ -159,10 +173,28 @@ SEGMENT_JSON_SCHEMA: dict = {
             "minItems": 1,
             "maxItems": 12,
         },
+        "understood": {"type": "boolean"},
     },
-    "required": ["actions"],
+    "required": ["actions", "understood"],
     "additionalProperties": False,
 }
+
+
+def segment_schema(max_actions: int) -> dict:
+    """Segment schema capped at ``max_actions`` moves (fresh copy)."""
+    return {
+        "type": "object",
+        "properties": {
+            "actions": {
+                **PLAN_JSON_SCHEMA["properties"]["actions"],
+                "minItems": 1,
+                "maxItems": max_actions,
+            },
+            "understood": {"type": "boolean"},
+        },
+        "required": ["actions", "understood"],
+        "additionalProperties": False,
+    }
 
 
 def complete_plan(
@@ -170,6 +202,7 @@ def complete_plan(
     user_prompt: str,
     model: str = DEFAULT_MODEL,
     json_schema: dict | None = None,
+    timeout: float | None = None,
 ) -> dict:
     """Request a structured plan from Muse Spark.
 
@@ -178,7 +211,9 @@ def complete_plan(
     """
     schema = json_schema if json_schema is not None else PLAN_JSON_SCHEMA
     try:
-        client = get_client()
+        client = get_client(
+            REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
+        )
     except MissingCredentialsError:
         raise
 
@@ -302,6 +337,7 @@ def complete_plan(
                 "Mission planning failed: the plan grew too long to "
                 "finish. Try a shorter mission."
             )
+            raise PlannerError(detail, code="truncated") from None
         elif finish_reason == "content_filter":
             detail = (
                 "Mission planning failed: the model response was "
@@ -339,7 +375,8 @@ def complete_plan(
             )
             raise PlannerError(
                 "Mission planning failed: the plan grew too long to "
-                "finish. Try a shorter mission."
+                "finish. Try a shorter mission.",
+                code="truncated",
             ) from None
         logger.warning(
             "plan request malformed JSON: model=%s chars=%d head=%r",

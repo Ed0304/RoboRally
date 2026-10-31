@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from game_logic import levels
 from ai_engine import router as agent_router
 from users import router as users_router
+from leaderboard import router as leaderboard_router
 from authentication import login, register
 app = FastAPI(
     title="RoboRally API",
@@ -22,6 +23,7 @@ app.include_router(register.router)
 app.include_router(levels.router)
 app.include_router(agent_router.router)
 app.include_router(users_router.router)
+app.include_router(leaderboard_router.router)
 
 #Enable CORS - IMPORTANT!
 app.add_middleware(

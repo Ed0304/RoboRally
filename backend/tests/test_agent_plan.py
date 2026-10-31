@@ -15,7 +15,12 @@ from pydantic import ValidationError
 from ai_engine import meta_client, planner
 from ai_engine.meta_client import PlannerError
 from ai_engine.rules import find_exit, simulate
-from ai_engine.schemas import Action, ActionPlan, PlanRequest
+from ai_engine.schemas import (
+    Action,
+    ActionPlan,
+    ActionSegment,
+    PlanRequest,
+)
 from main import app
 
 TINY_LEVEL = {
@@ -147,17 +152,20 @@ def test_simulate_rejects_out_of_bounds():
     assert "bounds" in result.rejected[0].reason
 
 
-def test_simulate_rejects_laser():
+def test_simulate_approves_laser_and_marks_death():
+    """Laser steps are legal moves with a lethal outcome: approved, with
+    the death index marked so the planner stops chaining there."""
     result = simulate(
         ["#####", "#SLE#", "#####"],
         {"x": 1, "z": 1},
         False,
         [],
-        [move("east")],
+        [move("east"), move("east")],
     )
 
-    assert result.approved == []
-    assert "laser" in result.rejected[0].reason
+    assert [a.direction for a in result.approved] == ["east", "east"]
+    assert result.died_at == 0
+    assert result.rejected == []
 
 
 def test_simulate_door_needs_trigger():
@@ -175,6 +183,20 @@ def test_simulate_door_needs_trigger():
     assert result.rejected == []
     assert (result.end_x, result.end_z) == (3, 1)
     assert result.doors_open is True
+
+
+def test_simulate_accepts_weighted_terrain():
+    result = simulate(
+        ["#####", "#S35#", "#####"],
+        {"x": 1, "z": 1},
+        False,
+        [],
+        [move("east"), move("east")],
+    )
+
+    assert len(result.approved) == 2
+    assert result.rejected == []
+    assert (result.end_x, result.end_z) == (3, 1)
 
 
 def test_simulate_rejects_enemy_tile():
@@ -228,7 +250,7 @@ def test_plan_happy_path(stub_level, monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {
+        lambda system, user, model, json_schema=None, **kwargs: {
             "actions": [
                 {"op": "move", "direction": "north"},
                 {"op": "move", "direction": "east"},
@@ -254,7 +276,7 @@ def test_plan_from_mid_level_state(stub_level, monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {
+        lambda system, user, model, json_schema=None, **kwargs: {
             "actions": [{"op": "move", "direction": "east"}],
 
         },
@@ -275,7 +297,7 @@ def test_plan_rejects_malformed_model_output(stub_level, monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {"unexpected": True},
+        lambda system, user, model, json_schema=None, **kwargs: {"unexpected": True},
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -297,7 +319,7 @@ def test_plan_missing_credentials(stub_level, monkeypatch):
 
 
 def test_plan_model_error_maps_to_503(stub_level, monkeypatch):
-    def boom(system, user, model, json_schema=None):
+    def boom(system, user, model, json_schema=None, **kwargs):
         raise PlannerError("Mission planning timed out.", status_code=503)
 
     monkeypatch.setattr(meta_client, "complete_plan", boom)
@@ -411,7 +433,7 @@ def _stub_client(
     monkeypatch.setattr(
         meta_client,
         "get_client",
-        lambda: _FakeClient(
+        lambda timeout=None: _FakeClient(
             content,
             finish_reason=finish_reason,
             refusal=refusal,
@@ -553,7 +575,7 @@ def test_complete_plan_uses_output_budget(monkeypatch):
         chat = _CaptureChat()
 
     monkeypatch.setattr(
-        meta_client, "get_client", lambda: _CaptureClient()
+        meta_client, "get_client", lambda timeout=None: _CaptureClient()
     )
 
     decoded = meta_client.complete_plan("system", "user")
@@ -563,7 +585,7 @@ def test_complete_plan_uses_output_budget(monkeypatch):
     assert meta_client.MAX_OUTPUT_TOKENS >= 2000
     assert seen["model"] == meta_client.DEFAULT_MODEL
     assert seen["reasoning_effort"] == meta_client.REASONING_EFFORT
-    assert meta_client.REASONING_EFFORT == "low"
+    assert meta_client.REASONING_EFFORT == "high"
 
 
 def test_complete_plan_reports_content_filter(monkeypatch):
@@ -582,7 +604,7 @@ def test_plan_rejects_empty_actions(stub_level, monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {
+        lambda system, user, model, json_schema=None, **kwargs: {
             "actions": [],
 
         },
@@ -599,7 +621,7 @@ def test_plan_rejects_unknown_segment_fields(stub_level, monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {
+        lambda system, user, model, json_schema=None, **kwargs: {
             "actions": [{"op": "move", "direction": "east"}],
             "reasoning": "Should not be here.",
         },
@@ -629,11 +651,13 @@ def test_json_schema_matches_pydantic_contract():
 
 
 def test_segment_schema_is_action_only():
-    """Segment calls request moves without free-form reasoning."""
+    """Segment calls request moves plus one comprehension flag —
+    still no free-form reasoning."""
     schema = meta_client.SEGMENT_JSON_SCHEMA
 
-    assert set(schema["properties"]) == {"actions"}
-    assert schema["required"] == ["actions"]
+    assert set(schema["properties"]) == {"actions", "understood"}
+    assert schema["required"] == ["actions", "understood"]
+    assert "reasoning" not in schema["properties"]
     assert schema["properties"]["actions"]["minItems"] == 1
     assert schema["properties"]["actions"]["maxItems"] == 12
 
@@ -660,15 +684,15 @@ def test_plan_logs_leg_diagnostics(stub_level, monkeypatch, caplog):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: _east_leg(2),
+        lambda system, user, model, json_schema=None, **kwargs: _east_leg(2),
     )
 
     with caplog.at_level(logging.INFO):
         planner.plan_mission(make_request())
 
     assert "schema=segment12" in caplog.text
-    assert "effort=low" in caplog.text
-    assert "limit=4000" in caplog.text
+    assert "effort=high" in caplog.text
+    assert f"limit={meta_client.MAX_OUTPUT_TOKENS}" in caplog.text
     assert "MODEL_API_KEY" not in caplog.text
 
 
@@ -680,7 +704,7 @@ def test_invalid_plan_logs_diagnostics(
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {"unexpected": True},
+        lambda system, user, model, json_schema=None, **kwargs: {"unexpected": True},
     )
 
     with caplog.at_level(logging.WARNING):
@@ -736,7 +760,7 @@ def test_plan_chains_segments_to_exit(monkeypatch):
         },
     ]
 
-    def scripted(system, user, model, json_schema=None):
+    def scripted(system, user, model, json_schema=None, **kwargs):
         prompts.append(user)
         assert (
             json_schema["properties"]["actions"]["maxItems"] == 12
@@ -769,7 +793,7 @@ def test_plan_stops_when_segment_stalls(monkeypatch):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: {
+        lambda system, user, model, json_schema=None, **kwargs: {
             "actions": [{"op": "move", "direction": "north"}],
 
         },
@@ -792,7 +816,7 @@ def test_plan_fails_when_budget_exhausted(monkeypatch, caplog):
     monkeypatch.setattr(
         meta_client,
         "complete_plan",
-        lambda system, user, model, json_schema=None: calls.append(
+        lambda system, user, model, json_schema=None, **kwargs: calls.append(
             user
         )
         or _east_leg(1),
@@ -809,7 +833,7 @@ def test_plan_fails_when_budget_exhausted(monkeypatch, caplog):
 
 
 def test_plan_short_circuits_at_exit(stub_level, monkeypatch):
-    def boom(system, user, model, json_schema=None):
+    def boom(system, user, model, json_schema=None, **kwargs):
         raise AssertionError("model must not be called")
 
     monkeypatch.setattr(meta_client, "complete_plan", boom)
@@ -822,3 +846,356 @@ def test_plan_short_circuits_at_exit(stub_level, monkeypatch):
 
     assert response.actions == []
     assert response.reasoning == "Already at the exit."
+
+
+REPORTED_MISSION = (
+    "Move south to the wall, go east to the nearest wall, then north "
+    "3 steps, east 2 steps, then north, east, north 4 steps, east "
+    "2 steps, go south until you hit a wall, go east to the exit."
+)
+
+LONG_LEVEL = {
+    "id": 102,
+    "name": "Marathon Corridor",
+    "goal": "Get to the finish line",
+    "layout": [
+        "#" * 42,
+        "#S" + "." * 38 + "E#",
+        "#" * 42,
+    ],
+}
+
+MID_LEVEL = {
+    "id": 103,
+    "name": "Long Corridor",
+    "goal": "Get to the finish line",
+    "layout": [
+        "#" * 62,
+        "#S" + "." * 58 + "E#",
+        "#" * 62,
+    ],
+}
+
+TOO_LONG_LEVEL = {
+    "id": 104,
+    "name": "Endless Corridor",
+    "goal": "Get to the finish line",
+    "layout": [
+        "#" * 82,
+        "#S" + "." * 78 + "E#",
+        "#" * 82,
+    ],
+}
+
+
+def _west_leg(count):
+    return {
+        "actions": [
+            {"op": "move", "direction": "west"}
+        ]
+        * count,
+    }
+
+
+def test_plan_rejects_blocked_starting_sequence(stub_level, monkeypatch):
+    """The exact Level 6 mission from the bug report starts with 'Move
+    south to the wall', which is blocked on the tiny level — so the
+    required starting moves fail fast instead of being ignored in
+    favor of an unrelated exit route. The model is stubbed: this pins
+    the conformance contract, not live model output."""
+    assert len(REPORTED_MISSION) <= 500
+
+    def boom(*args, **kwargs):
+        raise AssertionError("blocked starts must precede any model call")
+
+    monkeypatch.setattr(meta_client, "complete_plan", boom)
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request(mission=REPORTED_MISSION))
+
+    assert exc_info.value.status_code == 422
+    assert "can't be completed as stated" in exc_info.value.detail
+
+
+def test_plan_chains_four_legs_within_budget(monkeypatch):
+    """39-move route needs 4 legs: succeeds under the 48-move budget.
+    (The old 3-leg/36-move budget rejected this shape outright.)"""
+    monkeypatch.setattr(
+        planner, "load_level", lambda level_id: LONG_LEVEL
+    )
+    script = [_east_leg(12), _east_leg(12), _east_leg(12), _east_leg(3)]
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(user)
+        return script[len(calls) - 1]
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+
+    response = planner.plan_mission(make_request(level_id=102))
+
+    assert [a.direction for a in response.actions] == ["east"] * 39
+    assert len(response.actions) <= planner.MAX_TOTAL_ACTIONS
+    assert len(calls) == 4
+    assert response.rejected == []
+
+
+def test_plan_retries_truncated_leg_once(stub_level, monkeypatch):
+    calls = []
+
+    def flaky(system, user, model, json_schema=None, **kwargs):
+        calls.append((user, json_schema))
+        if len(calls) == 1:
+            raise PlannerError(
+                "Mission planning failed: the plan grew too long to "
+                "finish. Try a shorter mission.",
+                code="truncated",
+            )
+        return _east_leg(2)
+
+    monkeypatch.setattr(meta_client, "complete_plan", flaky)
+
+    response = planner.plan_mission(make_request())
+
+    assert [a.direction for a in response.actions] == ["east"] * 2
+    assert len(calls) == 2
+    # The retry is a smaller, simpler ask, not a blind repeat.
+    assert (
+        calls[1][1]["properties"]["actions"]["maxItems"]
+        == planner.RETRY_ACTIONS
+    )
+    assert "ONLY the next" in calls[1][0]
+    assert "Do not work out the rest" in calls[1][0]
+    # The retry must differ from the failed ask, never blindly repeat it.
+    assert calls[1][0] != calls[0][0]
+
+
+def test_plan_gives_up_after_retry_truncated(stub_level, monkeypatch):
+    calls = []
+
+    def always_truncated(
+        system, user, model, json_schema=None, **kwargs
+    ):
+        calls.append(user)
+        raise PlannerError(
+            "Mission planning failed: the plan grew too long to "
+            "finish. Try a shorter mission.",
+            code="truncated",
+        )
+
+    monkeypatch.setattr(meta_client, "complete_plan", always_truncated)
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request())
+
+    assert exc_info.value.status_code == 502
+    assert "too long" in exc_info.value.detail
+    assert len(calls) == 2
+
+
+def test_plan_stops_on_repeating_route(monkeypatch):
+    monkeypatch.setattr(
+        planner, "load_level", lambda level_id: CORRIDOR_LEVEL
+    )
+    script = [_east_leg(2), _west_leg(2)]
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(user)
+        return script[len(calls) - 1]
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request(level_id=101))
+
+    assert exc_info.value.status_code == 502
+    assert "repeating" in exc_info.value.detail
+    # The repeating leg is rejected; nothing partial is returned.
+    assert len(calls) == 2
+
+
+def test_plan_chains_five_legs_for_59_moves(monkeypatch):
+    """59-move route: 5 legs of 12/12/12/12/11 succeed within budget."""
+    monkeypatch.setattr(
+        planner, "load_level", lambda level_id: MID_LEVEL
+    )
+    script = [
+        _east_leg(12),
+        _east_leg(12),
+        _east_leg(12),
+        _east_leg(12),
+        _east_leg(11),
+    ]
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(user)
+        return script[len(calls) - 1]
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+
+    response = planner.plan_mission(make_request(level_id=103))
+
+    assert [a.direction for a in response.actions] == ["east"] * 59
+    assert len(response.actions) <= planner.MAX_TOTAL_ACTIONS
+    assert len(calls) == 5
+
+
+def test_plan_budget_covers_72_moves_not_79(monkeypatch):
+    """79-move route: 6 legs approve 72, then the budget error fires.
+    Total actions can never exceed MAX_TOTAL_ACTIONS."""
+    monkeypatch.setattr(
+        planner, "load_level", lambda level_id: TOO_LONG_LEVEL
+    )
+    calls = []
+    monkeypatch.setattr(
+        meta_client,
+        "complete_plan",
+        lambda system, user, model, json_schema=None, **kwargs: calls.append(
+            user
+        )
+        or _east_leg(12),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request(level_id=104))
+
+    assert exc_info.value.status_code == 502
+    assert "planning budget" in exc_info.value.detail
+    assert len(calls) == planner.MAX_SEGMENTS
+    assert len(calls) <= planner.MAX_MODEL_CALLS
+
+
+def test_plan_stops_at_elapsed_deadline(stub_level, monkeypatch):
+    def boom(system, user, model, json_schema=None, **kwargs):
+        raise AssertionError("model must not be called")
+
+    monkeypatch.setattr(meta_client, "complete_plan", boom)
+    monkeypatch.setattr(planner, "PLANNING_TIMEOUT_SECONDS", 0.0)
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request())
+
+    assert exc_info.value.status_code == 503
+    assert "timed out" in exc_info.value.detail
+
+
+def test_plan_until_wall_terminates_with_rejections(
+    stub_level, monkeypatch
+):
+    """A leg that runs into a wall approves the legal prefix, rejects
+    the rest, and terminates: no unbounded growth, no invalid moves."""
+    monkeypatch.setattr(
+        meta_client,
+        "complete_plan",
+        lambda system, user, model, json_schema=None, **kwargs: _east_leg(
+            12
+        ),
+    )
+
+    response = planner.plan_mission(make_request())
+
+    assert [a.direction for a in response.actions] == ["east"] * 2
+    assert len(response.rejected) == 10
+    assert len(response.actions) <= planner.MAX_TOTAL_ACTIONS
+
+
+def test_truncation_errors_carry_retry_code(monkeypatch):
+    _stub_client(monkeypatch, "", finish_reason="length")
+
+    with pytest.raises(PlannerError) as exc_info:
+        meta_client.complete_plan("system", "user")
+
+    assert exc_info.value.code == "truncated"
+
+    _stub_client(
+        monkeypatch,
+        '{"actions": [{"op": "move", "direc',
+        finish_reason="length",
+    )
+
+    with pytest.raises(PlannerError) as exc_info:
+        meta_client.complete_plan("system", "user")
+
+    assert exc_info.value.code == "truncated"
+
+
+# --- Gibberish comprehension gate ---
+
+
+def test_segment_understood_defaults_true():
+    """Outputs without the flag (older stubs) still validate."""
+    segment = ActionSegment.model_validate(
+        {"actions": [{"op": "move", "direction": "east"}]}
+    )
+
+    assert segment.understood is True
+
+
+def test_segment_schema_requires_understood_flag():
+    for schema in (
+        meta_client.SEGMENT_JSON_SCHEMA,
+        meta_client.segment_schema(6),
+    ):
+        assert schema["properties"]["understood"] == {"type": "boolean"}
+        assert "understood" in schema["required"]
+
+
+def test_plan_rejects_gibberish_mission(stub_level, monkeypatch):
+    # Pure noise is rejected by structural validation; the understood
+    # flag is the backstop for model-baffling text that passes it.
+    monkeypatch.setattr(
+        meta_client,
+        "complete_plan",
+        lambda system, user, model, json_schema=None, **kwargs: {
+            "actions": [{"op": "move", "direction": "north"}],
+            "understood": False,
+        },
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        planner.plan_mission(make_request(mission="Exit florp wubble burr"))
+
+    assert exc_info.value.status_code == 422
+    assert "gibberish" in exc_info.value.detail
+
+
+def test_plan_accepts_understood_mission(stub_level, monkeypatch):
+    monkeypatch.setattr(
+        meta_client,
+        "complete_plan",
+        lambda system, user, model, json_schema=None, **kwargs: {
+            "actions": [
+                {"op": "move", "direction": "east"},
+                {"op": "move", "direction": "east"},
+            ],
+            "understood": True,
+        },
+    )
+
+    response = planner.plan_mission(make_request(mission="go east 2"))
+
+    assert [a.direction for a in response.actions] == ["east", "east"]
+
+
+def test_system_prompt_never_judges_strategy():
+    """The model flags only gibberish; meaningful missions — even bad
+    ones — are planned as stated, since the game tests problem-solving."""
+    assert "understood=false" in planner.SYSTEM_PROMPT
+    assert (
+        "Do not judge or correct the player's strategy"
+        in planner.SYSTEM_PROMPT
+    )
+
+
+def test_system_prompt_does_not_mandate_laser_avoidance():
+    """Lethality is stated as a fact, but the model must follow the
+    mission as stated instead of refusing or rerouting around hazards."""
+    assert "Never step on a laser" not in planner.SYSTEM_PROMPT
+    assert "never step on" not in planner.SYSTEM_PROMPT.lower()
+    assert "destroy the robot on entry" in planner.SYSTEM_PROMPT
+    assert (
+        "do not refuse, reroute, or second-guess it because of hazards"
+        in planner.SYSTEM_PROMPT
+    )

@@ -35,7 +35,16 @@ LASER = "L"
 TRIGGER = "!"
 EXIT = "E"
 
-KNOWN_SYMBOLS = set("#.SELCRD!")
+KNOWN_SYMBOLS = set("#.SELCRD!35")
+
+# Battery cost of entering a tile; mirrors the frontend cost model
+# (floor 1, rough 3, drain 5).
+ENTRY_COSTS = {"3": 3, "5": 5}
+DEFAULT_ENTRY_COST = 1
+
+
+def entry_cost(symbol: str) -> int:
+    return ENTRY_COSTS.get(symbol, DEFAULT_ENTRY_COST)
 
 
 class SimResult(NamedTuple):
@@ -44,6 +53,9 @@ class SimResult(NamedTuple):
     end_x: int
     end_z: int
     doors_open: bool
+    cost: int
+    costs: list[int]
+    died_at: int | None
 
 
 def parse_layout(layout: list[str]) -> dict[tuple[int, int], str]:
@@ -106,6 +118,9 @@ def simulate(
     doors_open = door_open
     approved: list[Action] = []
     rejected: list[RejectedAction] = []
+    cost = 0
+    costs: list[int] = []
+    died_at: int | None = None
 
     for index, action in enumerate(actions):
         dx, dz = OFFSETS[action.direction]
@@ -149,18 +164,6 @@ def simulate(
             )
             continue
 
-        if symbol == LASER:
-            rejected.append(
-                RejectedAction(
-                    index=index,
-                    reason=(
-                        f"Move {action.direction} steps onto a laser at "
-                        f"({next_x}, {next_z}) and would destroy the robot."
-                    ),
-                )
-            )
-            continue
-
         if (next_x, next_z) in enemy_tiles:
             rejected.append(
                 RejectedAction(
@@ -177,6 +180,16 @@ def simulate(
         x, z = next_x, next_z
         approved.append(action)
 
+        if symbol == LASER and died_at is None:
+            # Laser steps are legal moves with a lethal outcome: approve
+            # them and mark where death occurs. The planner stops
+            # chaining there; the engine resolves death at execution.
+            died_at = len(approved) - 1
+
+        step_cost = entry_cost(symbol)
+        cost += step_cost
+        costs.append(step_cost)
+
         if symbol == TRIGGER:
             doors_open = True
 
@@ -186,4 +199,7 @@ def simulate(
         end_x=x,
         end_z=z,
         doors_open=doors_open,
+        cost=cost,
+        costs=costs,
+        died_at=died_at,
     )

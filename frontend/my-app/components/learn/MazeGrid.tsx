@@ -23,6 +23,8 @@ function cellClass(
   isWall: boolean,
   isStart: boolean,
   isExit: boolean,
+  isRough: boolean,
+  isDrain: boolean,
   inPath: boolean,
   inFrontier: boolean,
   inExplored: boolean,
@@ -33,6 +35,8 @@ function cellClass(
 
   let tone = "bg-[#22262D]";
 
+  if (isRough) tone = "bg-[#B45309]/35 text-[#F2A93B]";
+  if (isDrain) tone = "bg-[#7C3AED]/35 text-[#C4B5FD]";
   if (inExplored) tone = "bg-[#3D5A73]";
   if (inFrontier) tone = "bg-[#F2A93B]/70";
   if (inPath) tone = "bg-[#65D982]";
@@ -71,6 +75,8 @@ export default function MazeGrid({
           tile.x === maze.start.x && tile.z === maze.start.z;
         const isExit =
           tile.x === maze.exit.x && tile.z === maze.exit.z;
+        const isRough = tile.type === "rough";
+        const isDrain = tile.type === "drain";
 
         return (
           <div
@@ -80,12 +86,18 @@ export default function MazeGrid({
                 ? `Start (${tile.x}, ${tile.z})`
                 : isExit
                   ? `Exit (${tile.x}, ${tile.z})`
-                  : `(${tile.x}, ${tile.z})`
+                  : isRough
+                    ? `Rough, 3% battery (${tile.x}, ${tile.z})`
+                    : isDrain
+                      ? `Drain, 5% battery (${tile.x}, ${tile.z})`
+                      : `(${tile.x}, ${tile.z})`
             }
-            className={`flex aspect-square items-center justify-center rounded-[3px] text-[10px] transition-colors ${cellClass(
+            className={`flex aspect-square items-center justify-center rounded-[3px] text-[10px] font-bold transition-colors ${cellClass(
               tile.type === "wall",
               isStart,
               isExit,
+              isRough,
+              isDrain,
               path?.has(key) ?? false,
               frontier?.has(key) ?? false,
               explored?.has(key) ?? false,
@@ -93,7 +105,7 @@ export default function MazeGrid({
               markerKey === key
             )}`}
           >
-            {isStart ? "S" : isExit ? "E" : ""}
+            {isStart ? "S" : isExit ? "E" : isRough ? "3" : isDrain ? "5" : ""}
           </div>
         );
       })}

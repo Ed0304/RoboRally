@@ -25,6 +25,8 @@ export interface RouteOptions {
   strategy?: SearchStrategy;
   /** Movement costs. Defaults to uniform 1 per tile. */
   costs?: CostModel;
+  /** Door state at the search start. Defaults to false. */
+  initialDoorOpen?: boolean;
 }
 
 export interface RouteResult {
@@ -105,11 +107,11 @@ export function planRoute(
     return tileMap.get(`${x},${z}`)?.type === "trigger";
   }
 
-  if (blocked(start.x, start.z, false)) {
+  const startDoorOpen = options.initialDoorOpen ?? false;
+
+  if (blocked(start.x, start.z, startDoorOpen)) {
     return failure("No route: the robot's tile is blocked.");
   }
-
-  const startDoorOpen = false;
   const stateKey = (x: number, z: number, doorOpen: boolean) =>
     options.dynamicDoors ? `${x},${z},${doorOpen}` : `${x},${z}`;
 
@@ -289,4 +291,49 @@ export function compareStrategies(
 
     return { strategy, result, ms };
   });
+}
+
+export interface CostFieldOptions {
+  avoidLasers: boolean;
+  dynamicDoors: boolean;
+  initialDoorOpen?: boolean;
+  costs?: CostModel;
+}
+
+/**
+ * Minimum battery cost from the start cell to every valid destination tile,
+ * keyed by "x,z". Walls, voids, and lethal lasers are never entries;
+ * unreachable tiles are omitted. The start tile maps to 0. Each entry is
+ * computed with the same Dijkstra search (and cost model) the planner uses,
+ * so projections match execution math exactly.
+ */
+export function costField(
+  maze: MazeDefinition,
+  start: RouteCell,
+  options: CostFieldOptions
+): Map<string, number> {
+  const field = new Map<string, number>();
+  const costs = options.costs ?? DEFAULT_COSTS;
+
+  for (const tile of maze.tiles) {
+    if (tile.type === "wall" || tile.type === "laser") continue;
+
+    const key = `${tile.x},${tile.z}`;
+    if (tile.x === start.x && tile.z === start.z) {
+      field.set(key, 0);
+      continue;
+    }
+
+    const route = planRoute(maze, start, { x: tile.x, z: tile.z }, {
+      avoidLasers: options.avoidLasers,
+      dynamicDoors: options.dynamicDoors,
+      initialDoorOpen: options.initialDoorOpen,
+      strategy: "dijkstra",
+      costs,
+    });
+
+    if (route.reached) field.set(key, route.cost);
+  }
+
+  return field;
 }

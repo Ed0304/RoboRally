@@ -21,6 +21,8 @@ import MazeTiles from "./MazeTiles";
 import Robot from "./Robot";
 import Compass from "./Compass";
 import MissionPanel from "./MissionPanel";
+import TutorialLesson from "./TutorialLesson";
+import StoryResults, { type StoryResultData } from "./StoryResults";
 
 import {
   moveRobot,
@@ -31,16 +33,19 @@ import {
 import {
   planRoute,
   previewOptionsFor,
+  type RouteCell,
   type SearchStrategy,
 } from "@/lib/pathfinding";
 import {
   BATTERY_MAX,
-  DEFAULT_COSTS,
   canAfford,
+  costsForMaze,
   deductBattery,
   estimatePlanCost,
   moveCost,
+  prefixCosts,
   stepDestination,
+  toastForMove,
 } from "@/lib/battery";
 import type { PlanAction } from "@/lib/agent";
 import {
@@ -55,6 +60,21 @@ import {
   getNextLevelId,
   pushCompletion,
 } from "@/lib/progress";
+import {
+  benchmarkLevel,
+  fewestMoveEntry,
+  optimalCostEntry,
+} from "@/lib/benchmarks";
+import {
+  loadBests,
+  recordStoryRun,
+  type StoryRun,
+} from "@/lib/bests";
+import {
+  newRunId,
+  submissionForRun,
+  submitStoryRun,
+} from "@/lib/leaderboard-api";
 
 interface MazeSceneProps {
   level: LevelData;
@@ -104,6 +124,7 @@ function LoadedMazeScene({
 }) {
 
   const maze = useMemo(() => buildMaze(level), [level]);
+  const costs = useMemo(() => costsForMaze(maze), [maze]);
 
   const routes = useMemo(
     () => ENEMY_PATROLS[level.id] ?? [],
@@ -126,10 +147,13 @@ function LoadedMazeScene({
 
   const [status, setStatus] = useState<GameStatus>("playing");
   const [doorOpen, setDoorOpen] = useState(false);
-  const [preview, setPreview] = useState<{ cells: Set<string>; steps: number; cost: number; strategy: SearchStrategy } | null>(null);
+  const [preview, setPreview] = useState<{ cells: Set<string>; path: RouteCell[]; steps: number; cost: number; strategy: SearchStrategy } | null>(null);
   const [algorithm, setAlgorithm] = useState<SearchStrategy>("bfs");
   const [battery, setBattery] = useState(BATTERY_MAX);
   const batteryRef = useRef(BATTERY_MAX);
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const toastIdRef = useRef(0);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
 
   // Refs let the patrol timer and plan executor access latest state.
@@ -150,7 +174,20 @@ function LoadedMazeScene({
   const execCancelRef = useRef(false);
   const execRunningRef = useRef(false);
   const completionSavedRef = useRef(false);
+  // Story run tracking: successful moves, execution wall time, and Muse
+  // Spark planning time since load/restart. Powers StoryResults only.
+  const runMovesRef = useRef(0);
+  const runExecMsRef = useRef(0);
+  const runPlanMsRef = useRef(0);
+  const runPlanCountRef = useRef(0);
+  const [storyResult, setStoryResult] = useState<StoryResultData | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     robotRef.current = robotState;
@@ -204,8 +241,52 @@ function LoadedMazeScene({
       if (userId !== null) {
         pushCompletion(level.id).catch(() => {});
       }
+
+      // Story-only results: compare the confirmed win against
+      // deterministic benchmarks and record personal bests. Benchmark
+      // failures must never break the win flow.
+      if (!showPreview) {
+        try {
+          const benchmarks = benchmarkLevel(level);
+          const optimal = optimalCostEntry(benchmarks);
+          const fewest = fewestMoveEntry(benchmarks);
+
+          if (
+            optimal !== null &&
+            fewest !== null &&
+            optimal.cost > 0 &&
+            fewest.moves > 0
+          ) {
+            const spent = BATTERY_MAX - batteryRef.current;
+            const run: StoryRun = {
+              levelId: level.id,
+              moves: runMovesRef.current,
+              remaining: batteryRef.current,
+              execMs: Math.round(runExecMsRef.current),
+              planMs: Math.round(runPlanMsRef.current),
+              planCount: runPlanCountRef.current,
+              costRatio: spent / optimal.cost,
+              moveRatio: runMovesRef.current / fewest.moves,
+              completedAt: new Date().toISOString(),
+            };
+            const previous = loadBests(userId);
+            const { isNewBest } = recordStoryRun(userId, run);
+            setStoryResult({ run, benchmarks, previous, isNewBest });
+
+            // Guests never upload; authenticated submissions are
+            // best-effort and completion-gated server-side.
+            if (userId !== null) {
+              submitStoryRun(
+                submissionForRun(run, newRunId(level.id))
+              ).catch(() => {});
+            }
+          }
+        } catch {
+          // No results panel; progression above is already saved.
+        }
+      }
     }
-  }, [status, level.id, userId]);
+  }, [status, level, level.id, userId, showPreview]);
 
   const displayedEnemies = enemyPositions.map((enemy) => {
   const alerted = isRobotDetected(robotState, [enemy], maze, 2);
@@ -343,7 +424,7 @@ function LoadedMazeScene({
       { x: robotRef.current.x, z: robotRef.current.z },
       maze,
       doorOpenRef.current,
-      DEFAULT_COSTS
+      costs
     );
 
     if (!canAfford(batteryRef.current, estimate.cost)) {
@@ -358,6 +439,7 @@ function LoadedMazeScene({
 
     execRunningRef.current = true;
     execCancelRef.current = false;
+    const execBegun = performance.now();
 
     let expected = {
       x: robotRef.current.x,
@@ -417,7 +499,7 @@ function LoadedMazeScene({
         }
 
         const dest = stepDestination(expected.x, expected.z, actions[index].direction);
-        const stepCost = moveCost(DEFAULT_COSTS, dest.x, dest.z);
+        const stepCost = moveCost(costs, dest.x, dest.z);
 
         if (!canAfford(batteryRef.current, stepCost)) {
           finish({
@@ -430,6 +512,7 @@ function LoadedMazeScene({
         }
 
         const result = attemptMove(actions[index].direction);
+        if (result.moved) runMovesRef.current += 1;
 
         if (result.status !== "playing") {
           finish({
@@ -456,8 +539,16 @@ function LoadedMazeScene({
           return;
         }
 
-        batteryRef.current = deductBattery(batteryRef.current, stepCost);
-        setBattery(batteryRef.current);
+        const remaining = deductBattery(batteryRef.current, stepCost);
+        batteryRef.current = remaining;
+        setBattery(remaining);
+        const toastText = toastForMove(stepCost, remaining);
+        if (toastText) {
+          if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+          toastIdRef.current += 1;
+          setToast({ id: toastIdRef.current, text: toastText });
+          toastTimerRef.current = setTimeout(() => setToast(null), 1400);
+        }
 
         expected = {
           x: robotRef.current.x,
@@ -473,6 +564,7 @@ function LoadedMazeScene({
       });
     } finally {
       execRunningRef.current = false;
+      runExecMsRef.current += performance.now() - execBegun;
     }
   }
 
@@ -481,7 +573,7 @@ function LoadedMazeScene({
       maze,
       { x: robotRef.current.x, z: robotRef.current.z },
       maze.exit,
-      { ...previewOptionsFor(maze), strategy: algorithm, costs: DEFAULT_COSTS }
+      { ...previewOptionsFor(maze), strategy: algorithm, costs }
     );
 
     if (!result.reached) {
@@ -492,6 +584,7 @@ function LoadedMazeScene({
 
     setPreview({
       cells: new Set(result.path.map((cell) => `${cell.x},${cell.z}`)),
+      path: result.path,
       steps: result.moves,
       cost: result.cost,
       strategy: algorithm,
@@ -503,6 +596,18 @@ function LoadedMazeScene({
     setPreview(null);
     setPreviewMessage(null);
   }
+
+  const batteryLabels = useMemo(() => {
+    if (!preview) return undefined;
+    const labels = new Map<string, number>();
+    const cumulative = prefixCosts(preview.path, costs);
+    for (let i = 1; i < preview.path.length; i++) {
+      if (cumulative[i - 1] > battery) break;
+      const cell = preview.path[i];
+      labels.set(`${cell.x},${cell.z}`, battery - cumulative[i - 1]);
+    }
+    return labels;
+  }, [preview, costs, battery]);
 
   function restart() {
     execCancelRef.current = true;
@@ -520,6 +625,13 @@ function LoadedMazeScene({
     enemiesRef.current = initialEnemies;
     statusRef.current = "playing";
     doorOpenRef.current = false;
+    // A restart begins a new run: re-arm completion recording and clear
+    // run tracking plus any previous results panel.
+    completionSavedRef.current = false;
+    runMovesRef.current = 0;
+    runExecMsRef.current = 0;
+    runPlanMsRef.current = 0;
+    runPlanCountRef.current = 0;
 
     setRobotState(initialRobot);
     setEnemyPositions(initialEnemies);
@@ -527,6 +639,12 @@ function LoadedMazeScene({
     setBattery(BATTERY_MAX);
     setDoorOpen(false);
     setExecution(IDLE_EXECUTION);
+    setStoryResult(null);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setToast(null);
   }
 
   return (
@@ -542,13 +660,40 @@ function LoadedMazeScene({
           Position: ({robotState.x}, {robotState.z})
         </p>
 
-        <p className={`mt-2 text-sm ${battery <= 20 ? "text-[#FF7979]" : "text-[#ADB2BD]"}`}>
-          Battery: {battery}%
-        </p>
+        <div className="mt-2 flex items-center gap-2" role="img" aria-label={`Battery ${battery} percent`}>
+          <svg width="26" height="14" viewBox="0 0 26 14" aria-hidden="true" className="shrink-0">
+            <rect x="0.5" y="0.5" width="21" height="13" rx="2.5" fill="none" stroke="#ADB2BD" strokeWidth="1.5" />
+            <rect x="2.5" y="2.5" width={Math.max((battery / BATTERY_MAX) * 17, 0)} height="9" rx="1" fill={battery <= 20 ? "#FF7979" : battery <= 50 ? "#F2A93B" : "#65D982"} />
+            <rect x="23" y="4.5" width="2.5" height="5" rx="1" fill="#ADB2BD" />
+          </svg>
+          <div className="h-2.5 w-28 overflow-hidden rounded-full bg-[#292E36]">
+            <div className="h-full rounded-full transition-all" style={{ width: `${battery}%`, backgroundColor: battery <= 20 ? "#FF7979" : battery <= 50 ? "#F2A93B" : "#65D982" }} />
+          </div>
+          <span className="font-mono text-sm font-bold text-[#F3F0E8]">{battery}%</span>
+        </div>
+        {battery <= 20 && (
+          <p className="mt-1 text-xs font-semibold text-[#FF7979]">Low battery — restart to recharge.</p>
+        )}
 
         <p className="mt-2 text-xs text-[#9299A6]">
           Control: AI agent only
         </p>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#9299A6]" aria-label="Terrain battery costs">
+          <span className="font-semibold uppercase tracking-wider">Terrain:</span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded-sm border border-[#515A61]" style={{ backgroundColor: "#343A40" }} />
+            Floor 1%
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "#B45309" }} />
+            Rough 3%
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "#7C3AED" }} />
+            Drain 5%
+          </span>
+        </div>
 
         {won && (
           <p className="mt-3 font-bold text-[#65D982]">
@@ -565,6 +710,10 @@ function LoadedMazeScene({
           </button>
         )}
 
+        {won && !showPreview && storyResult && (
+          <StoryResults levelName={level.name} result={storyResult} />
+        )}
+
         {dead && (
           <p className="mt-3 font-bold text-[#FF7979]">
             ROBOT DESTROYED — MISSION FAILED
@@ -573,10 +722,12 @@ function LoadedMazeScene({
 
         <button
           onClick={restart}
-          className="mt-3 rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-medium text-[#F3F0E8] transition hover:border-[#F2A93B] hover:bg-[#343A44]"
+          title="Reset the robot to its starting position and recharge the battery to try again"
+          className="mt-3 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-semibold text-[#F3F0E8] transition hover:border-[#F2A93B] hover:bg-[#343A44]"
         >
-          Restart
+          ↺ Restart position
         </button>
+
 
         {showPreview && status === "playing" && (
           <label className="mt-3 block text-xs text-[#ADB2BD]">
@@ -637,17 +788,34 @@ function LoadedMazeScene({
               z: enemy.z,
             })),
             doorOpen,
+            battery: batteryRef.current,
           })}
           execution={execution}
           canExecute={status === "playing"}
           onExecute={executePlan}
           onStop={() => stopExecution()}
+          onPlanTiming={(ms) => {
+            runPlanMsRef.current += ms;
+            runPlanCountRef.current += 1;
+          }}
         />
+        {showPreview && (
+          <div className="mt-3">
+            <TutorialLesson levelId={level.id} />
+          </div>
+        )}
     </div>
     <div className="relative h-[520px] w-full">
       <div className="pointer-events-none absolute right-4 top-4 z-10">
         <Compass direction={robotState.direction} />
       </div>
+      {toast && (
+        <div key={toast.id} className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center">
+          <div className="rounded-lg border border-[#F2A93B]/50 bg-slate-950/90 px-4 py-2 text-sm font-semibold text-[#F2A93B]">
+            {toast.text}
+          </div>
+        </div>
+      )}
       <div className="pointer-events-none absolute inset-x-0 top-6 z-50 flex justify-center">
     <div
       className={`rounded-lg border border-cyan-400/50 bg-slate-950/90 px-6 py-3 text-center shadow-[0_0_24px_rgba(34,211,238,0.2)] backdrop-blur-sm transition-all duration-500 ${
@@ -703,6 +871,7 @@ function LoadedMazeScene({
             enemyPositions={displayedEnemies}
             doorOpen={doorOpen}
             previewRoute={preview?.cells}
+            batteryLabels={batteryLabels}
           />
           <Robot state={robotState} />
         </group>

@@ -8,6 +8,7 @@ import {
   previewOptionsFor,
   type RouteCell,
 } from "@/lib/pathfinding";
+import { costsForMaze } from "@/lib/battery";
 
 let failures = 0;
 
@@ -139,25 +140,53 @@ console.log("Laser-sealed maze: explicit no-safe-route message");
   );
 }
 
-// --- Level 3: door-state search stays engine-legal ---
-// Note: L3's exit is reachable without the door (the door is a
-// shortcut), so mechanic coverage uses the crafted maze below.
-console.log("Level 3 (Something Unexpected): door-aware search");
+// --- Level 3: walls-only search with one rough tile ---
+// L3 no longer has doors (blocked shortcut is a wall now); the old trigger
+// cell is rough terrain, so BFS may pay extra while Dijkstra routes around it.
+console.log("Level 3 (Something Unexpected): plain search, weighted tile");
 {
   const maze = levelLayout(3);
   const options = previewOptionsFor(maze);
-  check("door-state search enabled", options.dynamicDoors);
+  check(
+    "plain search (no lasers, no doors)",
+    !options.avoidLasers && !options.dynamicDoors
+  );
+  check(
+    "exactly one rough tile",
+    maze.tiles.filter((t) => t.type === "rough").length === 1
+  );
 
-  const route = planRoute(maze, maze.start, maze.exit, options);
-  check("route reaches the exit", route.reached, route.reason);
+  const costs = costsForMaze(maze);
+  const bfs = planRoute(maze, maze.start, maze.exit, {
+    ...options,
+    strategy: "bfs",
+    costs,
+  });
+  check("BFS reaches in 14 moves", bfs.reached && bfs.moves === 14);
+  check("BFS pays for the rough tile", bfs.cost === 16, `cost=${bfs.cost}`);
 
-  const walk = walkRoute(maze, route.path);
+  const walk = walkRoute(maze, bfs.path);
   check("every step is engine-legal", walk.legal, walk.detail);
 
-  const again = planRoute(maze, maze.start, maze.exit, options);
+  const dijkstra = planRoute(maze, maze.start, maze.exit, {
+    ...options,
+    strategy: "dijkstra",
+    costs,
+  });
+  check(
+    "Dijkstra avoids the rough tile at equal moves",
+    dijkstra.reached && dijkstra.moves === 14 && dijkstra.cost === 14,
+    `moves=${dijkstra.moves} cost=${dijkstra.cost}`
+  );
+
+  const again = planRoute(maze, maze.start, maze.exit, {
+    ...options,
+    strategy: "bfs",
+    costs,
+  });
   check(
     "deterministic across runs",
-    JSON.stringify(again.path) === JSON.stringify(route.path)
+    JSON.stringify(again.path) === JSON.stringify(bfs.path)
   );
 }
 

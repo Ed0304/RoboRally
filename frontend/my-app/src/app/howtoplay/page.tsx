@@ -6,37 +6,50 @@ const steps = [
     number: "01",
     title: "Choose a game mode",
     description:
-      "Select Tutorial to learn the basics or Story to begin the factory rescue mission.",
+      "Select Tutorial to learn search algorithms with route previews, or Story to run agent-only rescue missions with no hints.",
   },
   {
     number: "02",
     title: "Define your objective",
     description:
-      "Tell your AI agent what you want to accomplish. Be clear about the goal, such as reaching a target or navigating around an obstacle.",
+      "Tell your AI agent what you want to accomplish. Be clear about the goal, such as reaching the exit while avoiding lasers and costly terrain.",
   },
   {
     number: "03",
     title: "Review the plan",
     description:
-      "The agent turns your objective into a sequence of structured actions. Review the proposed plan before it is executed.",
+      "The agent turns your objective into a sequence of structured actions. Review the proposed plan — and any rejected moves — before it is executed.",
   },
   {
     number: "04",
     title: "Execute actions",
     description:
-      "The game engine validates the agent's actions and applies valid moves to the factory environment.",
+      "The game engine validates the agent's actions and applies valid moves to the factory environment, deducting battery for every step.",
   },
   {
     number: "05",
     title: "Observe the result",
     description:
-      "Check the updated game state to see whether your robot made progress or encountered an obstacle.",
+      "Check the updated game state to see whether your robot made progress, ran low on battery, or encountered an obstacle.",
   },
   {
     number: "06",
     title: "Adapt and complete the mission",
     description:
-      "If the original plan no longer works, request a new plan based on the latest state. Keep working toward the objective.",
+      "If the original plan no longer works, request a new plan based on the latest state. Story runs end with a results breakdown and a leaderboard ranking.",
+  },
+];
+
+const modes = [
+  {
+    title: "Tutorial · Levels 1–3",
+    description:
+      "One algorithm per level: BFS finds the fewest moves, Dijkstra finds the cheapest battery cost, and A* adds a goal-directed heuristic. Preview routes freely — previews never move the robot or drain battery.",
+  },
+  {
+    title: "Story · Levels 4–6",
+    description:
+      "Agent-only factory rescue with no hints and no previews. Find efficient routes yourself: every win records moves, battery, and planning time, then ranks you against BFS, Dijkstra, A*, and other players.",
   },
 ];
 
@@ -52,9 +65,10 @@ export default function HowtoPlayPage() {
             How to Play
           </h1>
           <p className="mt-3 max-w-2xl leading-7 text-muted">
-            Your objective is to guide a robot through a factory environment
-            with the help of an AI agent. Give it a goal, evaluate its plan,
-            and adapt when conditions change.
+            Your objective is to guide a robot through a factory
+            environment with the help of an AI agent. Give it a goal,
+            evaluate its plan, watch your battery, and adapt when
+            conditions change.
           </p>
         </header>
 
@@ -73,6 +87,23 @@ export default function HowtoPlayPage() {
             The agent does not just make a plan once. It can respond to the
             latest game state when its route is blocked or circumstances change.
           </p>
+        </section>
+
+        <section>
+          <h2 className="mb-5 text-xl font-black">Two modes</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            {modes.map((mode) => (
+              <article
+                key={mode.title}
+                className="rounded-xl border border-border bg-surface p-5 sm:p-6"
+              >
+                <h3 className="font-bold">{mode.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-muted">
+                  {mode.description}
+                </p>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section>
@@ -98,6 +129,57 @@ export default function HowtoPlayPage() {
         </section>
 
         <section className="rounded-2xl border border-border bg-surface p-6">
+          <h2 className="text-xl font-black">Battery and terrain</h2>
+          <ul className="mt-4 space-y-3 text-sm leading-6 text-muted">
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              The robot starts every mission at 100% battery. Plain
+              floor costs 1% per step, rough ground (3) costs 3%, and
+              draining ground (5) costs 5%.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              Laser tiles are lethal: stepping on one destroys the
+              robot and ends the run.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              Previewing a route is always free. Only executed moves
+              drain battery.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              Plans that cost more battery than remains are rejected
+              before execution. Restart recharges to 100%.
+            </li>
+          </ul>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-surface p-6">
+          <h2 className="text-xl font-black">Learn and compete</h2>
+          <ul className="mt-4 space-y-3 text-sm leading-6 text-muted">
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              New to pathfinding? The{" "}
+              <Link href="/learn" className="font-semibold text-accent hover:underline">
+                Pathfinding Lab
+              </Link>{" "}
+              teaches BFS, Dijkstra, and A* with hands-on visualizations
+              on practice mazes.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              Story wins are ranked on the{" "}
+              <Link href="/leaderboard" className="font-semibold text-accent hover:underline">
+                leaderboard
+              </Link>
+              : most battery left, fewest steps, and best planner
+              score per level.
+            </li>
+          </ul>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-surface p-6">
           <h2 className="text-xl font-black">Tips for a successful run</h2>
           <ul className="mt-4 space-y-3 text-sm leading-6 text-muted">
             <li>
@@ -111,16 +193,19 @@ export default function HowtoPlayPage() {
             </li>
             <li>
               <span className="mr-2 font-bold text-accent">›</span>
-              Check the plan against the objective before execution.
+              Check the plan against the objective before execution —
+              and read rejections, which explain what the game refused
+              and why.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              On weighted terrain, a longer route can be cheaper than
+              a short one. In Tutorial mode, preview both before you
+              commit.
             </li>
             <li>
               <span className="mr-2 font-bold text-accent">›</span>
               When an action fails, use the new state to decide what to try next.
-            </li>
-            <li>
-              <span className="mr-2 font-bold text-accent">›</span>
-              Treat obstacles as a reason to adapt, not necessarily to abandon
-              the mission.
             </li>
           </ul>
         </section>
@@ -131,6 +216,12 @@ export default function HowtoPlayPage() {
             className="inline-flex items-center justify-center rounded-lg bg-accent px-6 py-3 font-bold text-accent-foreground transition hover:bg-accent-hover"
           >
             Choose Game Mode →
+          </Link>
+          <Link
+            href="/learn"
+            className="inline-flex items-center justify-center rounded-lg border border-border bg-surface px-6 py-3 font-semibold transition hover:border-accent/50"
+          >
+            Visit the Lab
           </Link>
           <Link
             href="/"

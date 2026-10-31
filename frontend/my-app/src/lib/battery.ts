@@ -29,6 +29,30 @@ export function moveCost(costs: CostModel, x: number, z: number): number {
   return costs.overrides.get(`${x},${z}`) ?? costs.defaultCost;
 }
 
+/** Entry cost by tile type: floor 1, rough (3) 3, drain (5) 5. */
+export function tileEntryCost(type: string): number {
+  if (type === "rough") return 3;
+  if (type === "drain") return 5;
+  return STANDARD_MOVE_COST;
+}
+
+/**
+ * Cost model derived from a maze's weighted tiles. Single source mapping
+ * terrain to battery cost; used identically by previews, estimates, and
+ * execution deductions.
+ */
+export function costsForMaze(maze: MazeDefinition): CostModel {
+  const overrides = new Map<string, number>();
+
+  for (const tile of maze.tiles) {
+    if (tile.type === "rough" || tile.type === "drain") {
+      overrides.set(`${tile.x},${tile.z}`, tileEntryCost(tile.type));
+    }
+  }
+
+  return { defaultCost: STANDARD_MOVE_COST, overrides };
+}
+
 /** Total battery cost of a route. The start tile costs 0. */
 export function routeCost(path: RouteCell[], costs: CostModel): number {
   let total = 0;
@@ -103,4 +127,28 @@ export function canAfford(battery: number, cost: number): boolean {
 /** Battery remaining after paying a cost. Callers must check affordability. */
 export function deductBattery(battery: number, cost: number): number {
   return battery - cost;
+}
+
+/**
+ * Cumulative entry cost after each step of a path (excludes the start tile,
+ * which costs 0). Entry i is the cost of reaching path[i + 1].
+ */
+export function prefixCosts(path: RouteCell[], costs: CostModel): number[] {
+  const out: number[] = [];
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    total += moveCost(costs, path[i].x, path[i].z);
+    out.push(total);
+  }
+  return out;
+}
+
+/**
+ * Per-move consumption toast text, e.g. "−1% Battery · 99% remaining".
+ * Returns null when nothing was consumed (zero-cost step): no toast, since
+ * there is no consumption to report. Uses U+2212 minus for readability.
+ */
+export function toastForMove(cost: number, remaining: number): string | null {
+  if (cost <= 0) return null;
+  return `−${cost}% Battery · ${remaining}% remaining`;
 }

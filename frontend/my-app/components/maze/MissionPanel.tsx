@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   requestPlan,
   type PlanAction,
@@ -10,11 +10,17 @@ import {
 } from "@/lib/agent";
 import type { ExecutionState } from "@/lib/execution";
 import { recordPromptAttempt } from "@/lib/user";
+import { tutorialExampleForLevel } from "@/lib/tutorialExamples";
+import {
+  classifyPlanningError,
+  summarizePlan,
+} from "@/lib/planSummary";
 
 export interface MissionSnapshot {
   robot: { x: number; z: number; direction: PlanDirection };
   enemies: { x: number; z: number }[];
   doorOpen: boolean;
+  battery: number;
 }
 
 interface MissionPanelProps {
@@ -24,6 +30,8 @@ interface MissionPanelProps {
   canExecute: boolean;
   onExecute: (actions: PlanAction[]) => void;
   onStop: () => void;
+  /** Reports wall time of each successful plan request, in ms. */
+  onPlanTiming?: (ms: number) => void;
 }
 
 const directionArrow: Record<PlanDirection, string> = {
@@ -40,13 +48,31 @@ export default function MissionPanel({
   canExecute,
   onExecute,
   onStop,
+  onPlanTiming,
 }: MissionPanelProps) {
   const [mission, setMission] = useState("");
   const [loading, setLoading] = useState(false);
   const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [error, setError] = useState("");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle"
+  );
+
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const submittingRef = useRef(false);
+
+  // Verified example prompt for Tutorial levels only; null on Story.
+  const example = useMemo(
+    () => tutorialExampleForLevel(levelId),
+    [levelId]
+  );
 
   async function handleSubmit() {
+    // Ref guard plus disabled buttons: rapid clicks and regenerate
+    // spam can never stack duplicate in-flight requests.
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+
     const snapshot = getSnapshot();
 
     onStop();
@@ -60,13 +86,16 @@ export default function MissionPanel({
     // not an attempt and is never recorded. One call site per request,
     // so retries cannot duplicate entries.
     try {
+      const begun = performance.now();
       const response = await requestPlan({
         level_id: levelId,
         mission,
         robot: snapshot.robot,
         enemies: snapshot.enemies,
         door_open: snapshot.doorOpen,
+        battery: snapshot.battery,
       });
+      onPlanTiming?.(performance.now() - begun);
 
       setPlan(response);
       recordPromptAttempt(
@@ -74,15 +103,45 @@ export default function MissionPanel({
         response.actions.length > 0 ? "Success" : "Failed"
       ).catch(() => {});
     } catch (err) {
+      const kind = classifyPlanningError(err);
       setError(
-        err instanceof Error
-          ? err.message
-          : "Planning failed. Please try again."
+        kind === "network"
+          ? "Couldn't reach the planning server. Check your connection, then regenerate below — your words are preserved."
+          : err instanceof Error
+            ? err.message
+            : "Planning failed. Please try again."
       );
       recordPromptAttempt(mission.trim(), "Failed").catch(() => {});
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
+  }
+
+  async function handleCopyExample() {
+    if (!example) return;
+
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+
+      await navigator.clipboard.writeText(example.prompt);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  function handleInsertExample() {
+    if (!example) return;
+
+    // Insert only: the player reviews and submits it themselves.
+    setMission(example.prompt);
+    setCopyState("idle");
+    textareaRef.current?.focus();
+  }
+
+  function handleRephrase() {
+    textareaRef.current?.focus();
   }
 
   const canStartExecution =
@@ -92,13 +151,56 @@ export default function MissionPanel({
     plan !== null &&
     plan.actions.length > 0;
 
+  const canRegenerate =
+    !loading && !execution.running && mission.trim().length > 0;
+
   return (
     <div className="mt-3 border-t border-[#3B414B] pt-3">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#F2A93B]">
         AI Mission
       </p>
 
+      {example && (
+        <div className="mt-2 rounded-md border border-cyan-400/30 bg-[#22262D] p-2">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+            Stuck? Try this verified example
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[#E7E8EA]">
+            {example.prompt}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[#9299A6]">
+            A starting point, not the only solution — it describes a
+            route checked against this level. Works from the level
+            start; restart if you have already moved.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleCopyExample}
+              className="rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
+            >
+              {copyState === "copied" ? "Copied ✓" : "Copy prompt"}
+            </button>
+            <button
+              type="button"
+              onClick={handleInsertExample}
+              disabled={execution.running}
+              className="rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-1.5 text-xs font-semibold text-[#F3F0E8] transition hover:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Insert into input
+            </button>
+          </div>
+          {copyState === "failed" && (
+            <p className="mt-1 text-xs text-[#FFB020]">
+              Couldn&apos;t copy automatically — select the text above
+              manually.
+            </p>
+          )}
+        </div>
+      )}
+
       <textarea
+        ref={textareaRef}
         value={mission}
         onChange={(event) => setMission(event.target.value)}
         placeholder="e.g. Reach the exit without touching lasers"
@@ -132,6 +234,25 @@ export default function MissionPanel({
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#9299A6]">
             Plan · {plan.model}
           </p>
+
+          <div className="mt-1 rounded-md border border-[#3B414B] bg-[#191C22] p-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-cyan-200">
+              What the Agent Understood
+            </p>
+            <p className="mt-1 text-xs leading-5 text-[#E7E8EA]">
+              {summarizePlan(plan)}
+            </p>
+            {plan.reasoning && (
+              <p className="mt-1 text-xs leading-5 text-[#ADB2BD]">
+                Agent&apos;s notes: {plan.reasoning}
+              </p>
+            )}
+            <p className="mt-1 text-xs leading-5 text-[#9299A6]">
+              This is the agent&apos;s interpretation of your words —
+              review it before executing. It doesn&apos;t guarantee
+              success.
+            </p>
+          </div>
 
           {plan.actions.length === 0 ? (
             <p className="mt-1 text-xs text-[#FF7979]">
@@ -197,10 +318,6 @@ export default function MissionPanel({
             </p>
           )}
 
-          <p className="mt-2 text-xs leading-5 text-[#ADB2BD]">
-            {plan.reasoning}
-          </p>
-
           {plan.rejected.length > 0 && (
             <div className="mt-2 border-t border-[#3B414B] pt-2">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#FF7979]">
@@ -222,6 +339,33 @@ export default function MissionPanel({
               </ul>
             </div>
           )}
+        </div>
+      )}
+
+      {(error || plan) && (
+        <div className="mt-2 rounded-md border border-[#3B414B] bg-[#22262D] p-2">
+          <p className="text-xs leading-5 text-[#ADB2BD]">
+            Was your message interpreted incorrectly? Regenerate your
+            plan or rephrase your instructions.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canRegenerate}
+              className="rounded-md bg-[#F2A93B] px-3 py-1.5 text-xs font-semibold text-[#17191D] transition hover:bg-[#FFC15B] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? "Planning..." : "Regenerate plan"}
+            </button>
+            <button
+              type="button"
+              onClick={handleRephrase}
+              disabled={execution.running}
+              className="rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-1.5 text-xs font-semibold text-[#F3F0E8] transition hover:border-[#F2A93B] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Rephrase instructions
+            </button>
+          </div>
         </div>
       )}
     </div>

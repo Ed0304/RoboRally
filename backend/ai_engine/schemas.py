@@ -37,6 +37,7 @@ class PlanRequest(BaseModel):
     robot: RobotState
     enemies: list[EnemyState] = Field(default_factory=list)
     door_open: bool = False
+    battery: int = Field(default=100, ge=0, le=100)
 
 
 class Action(BaseModel):
@@ -60,11 +61,14 @@ class ActionPlan(BaseModel):
 
 class ActionSegment(BaseModel):
     """Action-only segment output: the model returns moves, and the
-    planner synthesizes display text server-side."""
+    planner synthesizes display text server-side. ``understood`` is
+    false only when the mission is gibberish with no discernible
+    instruction; it defaults true so older outputs stay valid."""
 
     model_config = ConfigDict(extra="forbid")
 
     actions: list[Action] = Field(min_length=1, max_length=MAX_ACTIONS)
+    understood: bool = True
 
 
 class RejectedAction(BaseModel):

@@ -9,7 +9,9 @@ export type TileType =
   | "collectible"
   | "enemy"
   | "door"
-  | "trigger";
+  | "trigger"
+  | "rough"
+  | "drain";
 
 // The mapping table: one place defines each symbol's meaning.
 export const TILE_MAPPING: Record<
@@ -25,6 +27,8 @@ export const TILE_MAPPING: Record<
   R:  { type: "enemy", blocksMovement: false },
   D:  { type: "door", blocksMovement: true },
   "!": { type: "trigger", blocksMovement: false },
+  "3": { type: "rough", blocksMovement: false },
+  "5": { type: "drain", blocksMovement: false },
 };
 
 export interface MazeTile {

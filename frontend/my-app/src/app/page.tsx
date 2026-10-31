@@ -34,9 +34,9 @@ export default function HomePage() {
         </h1>
 
         <p className="mx-auto mt-6 max-w-2xl text-base leading-7 text-muted sm:text-lg">
-          Command your robot. Navigate the factory. Adapt when your plan fails.
-          Every mission is a test of strategy, precision, and intelligent
-          decision-making.
+          Describe the mission. Your AI agent plans the rescue through a
+          failing factory — and the Pathfinding Lab teaches you the
+          search algorithms behind every route it takes.
         </p>
 
         <div className="mx-auto mt-10 flex max-w-md flex-col justify-center gap-3 sm:flex-row">
@@ -55,6 +55,14 @@ export default function HomePage() {
             How to Play
           </a>
         </div>
+
+        <a
+          href="/learn"
+          className="mx-auto mt-4 inline-flex max-w-md items-center justify-center gap-2 rounded-lg border border-accent/40 bg-accent/5 px-7 py-3 text-sm font-semibold text-accent transition hover:border-accent/70 hover:bg-accent/10"
+        >
+          Click here if you are new to algorithms and data structures
+          <span aria-hidden="true">→</span>
+        </a>
 
         <div className="mt-16 grid grid-cols-1 gap-3 text-left sm:grid-cols-3">
           {[

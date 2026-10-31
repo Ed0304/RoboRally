@@ -14,6 +14,7 @@ export interface PlanRequest {
   robot: { x: number; z: number; direction: PlanDirection };
   enemies: { x: number; z: number }[];
   door_open: boolean;
+  battery: number;
 }
 
 export interface RejectedAction {

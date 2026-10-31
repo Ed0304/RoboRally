@@ -4,6 +4,7 @@ import { levels } from "../data/levels";
 import { buildMaze, type MazeDefinition } from "@/lib/maze";
 import { canMoveTo } from "@/lib/gamelogic";
 import { planRoute, type RouteCell } from "@/lib/pathfinding";
+import { costsForMaze, type CostModel } from "@/lib/battery";
 
 // Canonical Phase B metadata for Story levels 4-6.
 const EXPECTED_META: Record<
@@ -33,27 +34,27 @@ const EXPECTED_META: Record<
   },
 };
 
-// Illustrative Phase B rough-tile coordinates (proposal-only, cost 3).
-const ROUGH: Record<number, string[]> = {
-  4: ["3,1", "4,1", "5,1", "6,1", "7,1", "8,1"],
-  5: ["7,5", "8,5", "9,5", "9,6", "9,7"],
-  6: ["13,4", "13,5", "13,6", "13,7", "13,8"],
+// Designed weighted-terrain counts per Story level.
+const EXPECTED_TERRAIN: Record<number, { rough: number; drain: number }> = {
+  4: { rough: 6, drain: 2 },
+  5: { rough: 5, drain: 2 },
+  6: { rough: 5, drain: 2 },
 };
 
-// Expected (moves, cost) under the illustrative model: ordinary tile 1,
-// rough tile 3, lasers blocked, doors dynamic.
+// Expected (moves, cost) under real terrain costs: floor 1, rough 3, drain 5.
 const EXPECTED_ROUTES: Record<
   number,
   { bfsMoves: number; bfsCost: number; dijkstraMoves: number; dijkstraCost: number }
 > = {
   4: { bfsMoves: 19, bfsCost: 31, dijkstraMoves: 25, dijkstraCost: 25 },
   5: { bfsMoves: 22, bfsCost: 32, dijkstraMoves: 24, dijkstraCost: 24 },
-  6: { bfsMoves: 41, bfsCost: 51, dijkstraMoves: 41, dijkstraCost: 41 },
+  6: { bfsMoves: 37, bfsCost: 47, dijkstraMoves: 41, dijkstraCost: 43 },
 };
 
 // Snapshot of Tutorial levels 1-3 to detect accidental changes.
+// Intentionally updated for the L2 Dijkstra fork + lesson descriptions.
 const TUTORIAL_SNAPSHOT =
-  "bdc4f1e3cf2090adf58cee5a042c71dcc2203cd5c62be41e02e3c52c91b23a3f";
+  "e1c8be60f34a850f8ebb9ef247b644c7f114f4ac5c926a579b35e838d4d89497";
 
 let failures = 0;
 
@@ -70,8 +71,11 @@ function tileType(m: MazeDefinition, x: number, z: number): string {
   return m.tiles.find((t) => t.x === x && t.z === z)?.type ?? "void";
 }
 
-/** Minimal Dijkstra over (x, z, doorOpen) for the illustrative cost model. */
-function dijkstra(m: MazeDefinition, rough: Set<string>) {
+/**
+ * Independent Dijkstra oracle over (x, z, doorOpen) with a CostModel.
+ * Cross-validates the library planner; lasers blocked, doors dynamic.
+ */
+function dijkstra(m: MazeDefinition, costs: CostModel) {
   const key = (x: number, z: number, d: boolean) => `${x},${z},${d}`;
   const dirs = [
     { x: 0, z: -1 },
@@ -79,6 +83,8 @@ function dijkstra(m: MazeDefinition, rough: Set<string>) {
     { x: 0, z: 1 },
     { x: -1, z: 0 },
   ];
+  const stepCost = (x: number, z: number) =>
+    costs.overrides.get(`${x},${z}`) ?? costs.defaultCost;
   const dist = new Map<string, number>();
   const prev = new Map<string, string>();
   const start = key(m.start.x, m.start.z, false);
@@ -115,8 +121,7 @@ function dijkstra(m: MazeDefinition, rough: Set<string>) {
       if (t === "void" || t === "wall" || t === "laser") continue;
       if (t === "door" && !d) continue;
       const nd = d || t === "trigger";
-      const nc =
-        (dist.get(cur) ?? Infinity) + (rough.has(`${nx},${nz}`) ? 3 : 1);
+      const nc = (dist.get(cur) ?? Infinity) + stepCost(nx, nz);
       const nk = key(nx, nz, nd);
       if (nc < (dist.get(nk) ?? Infinity)) {
         dist.set(nk, nc);
@@ -146,7 +151,7 @@ console.log("Tutorials 1-3 snapshot");
 }
 
 // --- Story levels 4-6 ---
-const ALLOWED = new Set(["#", ".", "S", "E", "L", "D", "!"]);
+const ALLOWED = new Set(["#", ".", "S", "E", "L", "D", "!", "3", "5"]);
 
 for (const id of [4, 5, 6]) {
   console.log(`Story level ${id}`);
@@ -181,11 +186,25 @@ for (const id of [4, 5, 6]) {
   const count = (s: string) => [...flat].filter((ch) => ch === s).length;
   check("exactly one start/exit", count("S") === 1 && count("E") === 1);
   check("no enemy/collectible markers", count("R") === 0 && count("C") === 0);
+  check("no door/trigger tiles", count("D") === 0 && count("!") === 0);
 
   const maze = buildMaze(level);
+  const costs = costsForMaze(maze);
+
+  const terrain = EXPECTED_TERRAIN[id];
+  const roughTiles = maze.tiles.filter((t) => t.type === "rough").length;
+  const drainTiles = maze.tiles.filter((t) => t.type === "drain").length;
+  check(
+    "weighted terrain counts match design",
+    roughTiles === terrain.rough && drainTiles === terrain.drain,
+    `rough=${roughTiles} drain=${drainTiles}`
+  );
+
   const safe = planRoute(maze, maze.start, maze.exit, {
     avoidLasers: true,
-    dynamicDoors: true,
+    dynamicDoors: false,
+    strategy: "bfs",
+    costs,
   });
   check("laser-free route exists", safe.reached);
   const laserSteps = safe.path.filter(
@@ -205,44 +224,14 @@ for (const id of [4, 5, 6]) {
   }
   check("every safe step engine-legal", legal && safe.reached);
 
-  if (id === 6) {
-    const shut = planRoute(maze, maze.start, maze.exit, {
-      avoidLasers: true,
-      dynamicDoors: false,
-    });
-    check("door is mandatory (sealed when shut)", !shut.reached);
-    check(
-      "safe route uses trigger and door",
-      safe.path.some((c) => tileType(maze, c.x, c.z) === "trigger") &&
-        safe.path.some((c) => tileType(maze, c.x, c.z) === "door")
-    );
-  }
-
-  // Illustrative battery comparison (proposal model, not implemented).
-  const rough = new Set(ROUGH[id]);
-  const roughValid = ROUGH[id].every((r) => {
-    const [x, z] = r.split(",").map(Number);
-    const t = tileType(maze, x, z);
-    return (
-      x >= 0 && z >= 0 && x < width && z < maze.depth &&
-      t !== "void" && t !== "wall" && t !== "laser"
-    );
-  });
-  check("rough coordinates traversable", roughValid);
-
+  // Real-terrain battery comparison.
   const expected = EXPECTED_ROUTES[id];
-  const bfsCost = safe.path
-    .slice(1)
-    .reduce(
-      (sum, c) => sum + (rough.has(`${c.x},${c.z}`) ? 3 : 1),
-      0
-    );
   check(
     "BFS moves/cost match",
-    safe.path.length - 1 === expected.bfsMoves && bfsCost === expected.bfsCost,
-    `moves=${safe.path.length - 1} cost=${bfsCost}`
+    safe.moves === expected.bfsMoves && safe.cost === expected.bfsCost,
+    `moves=${safe.moves} cost=${safe.cost}`
   );
-  const dj = dijkstra(maze, rough);
+  const dj = dijkstra(maze, costs);
   check(
     "Dijkstra moves/cost match",
     dj.reached &&
@@ -250,7 +239,19 @@ for (const id of [4, 5, 6]) {
       dj.cost === expected.dijkstraCost,
     `moves=${dj.path.length - 1} cost=${dj.cost}`
   );
-  check("Dijkstra cheaper than BFS", dj.cost < bfsCost);
+  check("Dijkstra cheaper than BFS", dj.cost < safe.cost);
+
+  const lib = planRoute(maze, maze.start, maze.exit, {
+    avoidLasers: true,
+    dynamicDoors: false,
+    strategy: "dijkstra",
+    costs,
+  });
+  check(
+    "library Dijkstra agrees with oracle",
+    lib.reached && lib.cost === dj.cost && lib.moves === dj.path.length - 1,
+    `moves=${lib.moves} cost=${lib.cost}`
+  );
 }
 
 if (failures > 0) {

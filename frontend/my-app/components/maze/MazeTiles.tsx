@@ -4,6 +4,7 @@
 import type { MazeDefinition, MazeTile } from "@/lib/maze";
 import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
+import { Text } from "@react-three/drei";
 import * as THREE from "three";
 import type {
   EnemyPosition,
@@ -20,6 +21,8 @@ interface MazeTilesProps {
   doorOpen: boolean;
   /** Route-preview cells as 'x,z' keys; rendered as markers only. */
   previewRoute?: ReadonlySet<string>;
+  /** Projected remaining battery % by 'x,z' key; labels only. */
+  batteryLabels?: ReadonlyMap<string, number>;
 }
 
 type BarrierOrientation = "horizontal" | "vertical";
@@ -480,15 +483,32 @@ function SpecialTile({
     case "trigger":
       return <TriggerTile tile={tile} active={doorOpen} />;
 
+    case "rough":
+      return <TerrainPlate tile={tile} color="#B45309" />;
+
+    case "drain":
+      return <TerrainPlate tile={tile} color="#7C3AED" />;
+
     default:
       return null;
   }
+}
+
+// Tinted plate marking weighted terrain: rough (3%) amber, drain (5%) violet.
+function TerrainPlate({ tile, color }: { tile: MazeTile; color: string }) {
+  return (
+    <mesh position={[tile.x, 0.015, tile.z]}>
+      <boxGeometry args={[0.9, 0.03, 0.9]} />
+      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} roughness={0.9} />
+    </mesh>
+  );
 }
 export default function MazeTiles({
   maze,
   enemyPositions,
   doorOpen,
   previewRoute,
+  batteryLabels,
 }: MazeTilesProps) {
   return (
     <>
@@ -546,6 +566,19 @@ export default function MazeTiles({
                 />
               </mesh>
             )}
+
+          {batteryLabels?.get(`${tile.x},${tile.z}`) !== undefined && (
+            <Text
+              position={[tile.x, 0.32, tile.z]}
+              rotation-x={-Math.PI / 2}
+              fontSize={0.26}
+              color="#FDE68A"
+              anchorX="center"
+              anchorY="middle"
+            >
+              {`${batteryLabels.get(`${tile.x},${tile.z}`)}%`}
+            </Text>
+          )}
 
           <SpecialTile
             tile={tile}

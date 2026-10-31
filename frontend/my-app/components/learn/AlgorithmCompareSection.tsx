@@ -3,7 +3,8 @@
 
 import { useMemo } from "react";
 import { cellKey } from "@/lib/bfs";
-import { DEFAULT_COSTS } from "@/lib/battery";
+import type { CostModel } from "@/lib/battery";
+import type { MazeDefinition } from "@/lib/maze";
 import {
   compareStrategies,
   previewOptionsFor,
@@ -11,7 +12,6 @@ import {
   type StrategyComparison,
 } from "@/lib/pathfinding";
 import MazeGrid from "./MazeGrid";
-import type { LabMaze } from "./LearnPanels";
 
 const TITLES: Record<SearchStrategy, string> = {
   bfs: "BFS — fewest moves",
@@ -23,7 +23,7 @@ function StrategyPanel({
   maze,
   comparison,
 }: {
-  maze: LabMaze["maze"];
+  maze: MazeDefinition;
   comparison: StrategyComparison;
 }) {
   const { strategy, result, ms } = comparison;
@@ -89,16 +89,22 @@ function StrategyPanel({
   );
 }
 
-export default function AlgorithmCompareSection({ lab }: { lab: LabMaze }) {
-  const { maze } = lab;
-
+export default function AlgorithmCompareSection({
+  maze,
+  costs,
+  mazeName,
+}: {
+  maze: MazeDefinition;
+  costs: CostModel;
+  mazeName: string;
+}) {
   const comparisons = useMemo(
     () =>
       compareStrategies(maze, maze.start, maze.exit, {
         ...previewOptionsFor(maze),
-        costs: DEFAULT_COSTS,
+        costs,
       }),
-    [maze]
+    [maze, costs]
   );
 
   const [bfs, dijkstra, astar] = comparisons;
@@ -127,12 +133,11 @@ export default function AlgorithmCompareSection({ lab }: { lab: LabMaze }) {
         BFS vs Dijkstra vs A*
       </h2>
       <p className="mt-3 max-w-3xl text-sm leading-6 text-muted">
-        All three strategies plan on the identical Level 1 maze, start,
-        exit, four-direction movement, laser policy, door rules, and the
-        game&apos;s uniform battery model (1% per move — this maze has no
-        special terrain). These are deterministic previews computed in
-        your browser: not Muse Spark plans, not executed, and costing no
-        battery.
+        All three strategies plan on the identical practice maze (
+        {mazeName}
+        ), start, exit, four-direction movement, and tile costs. These
+        are deterministic previews computed in your browser: not AI
+        plans, not executed, and costing no battery.
       </p>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
@@ -181,11 +186,11 @@ export default function AlgorithmCompareSection({ lab }: { lab: LabMaze }) {
         )}
         <p className="text-xs leading-5">
           Metric definitions: moves = steps on the found route; est.
-          battery = entry-cost sum at 1% per move (start tile free);
-          states expanded = search states removed from the frontier for
-          processing, counted inside the planner; planning time =
-          measured wall clock, where differences under a millisecond are
-          noise rather than a performance win.
+          battery = entry-cost sum at floor 1%, rough 3%, drain 5%
+          (start tile free); states expanded = search states removed
+          from the frontier for processing, counted inside the planner;
+          planning time = measured wall clock, where differences under
+          a millisecond are noise rather than a performance win.
         </p>
       </div>
     </section>
