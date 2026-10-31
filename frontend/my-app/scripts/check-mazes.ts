@@ -1,5 +1,5 @@
 
-import { levels } from "@/lib/levels";
+import { levels } from "../data/levels";
 import { buildMaze } from "@/lib/maze";
 import { validateMaze } from "@/lib/mazevalidation";
 

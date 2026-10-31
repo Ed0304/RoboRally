@@ -17,7 +17,7 @@ const directions = [
 export default function Compass({ direction }: CompassProps) {
   return (
     <div
-      className="rounded-xl border border-[#515A61] bg-[#171A1D]/95 p-3 text-[#F5F2E9] shadow-xl"
+      className="rounded-xl border border-[#515A61] bg-[#171A1D]/95 p-3 text-[#F5F2E9] shadow-xl ml-auto "
       aria-label={`Robot heading ${direction}`}
     >
       <p className="mb-2 text-center font-mono text-[10px] uppercase tracking-[0.2em] text-[#AAB3BA]">
@@ -81,7 +81,7 @@ export default function Compass({ direction }: CompassProps) {
         </div>
 
         {/* Center pivot */}
-        <div className="absolute left-1/2 top-1/2 z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#171A1D] bg-[#F5F2E9]" />
+        <div className="absolute left-1/2 top-1/2 z-20 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#171A1D] bg-[#F5F2E9] " />
       </div>
 
       <p className="mt-2 text-center text-xs font-semibold uppercase tracking-wider text-[#FF8A24]">
