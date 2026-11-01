@@ -45,3 +45,20 @@ export function recordPromptAttempt(
     body: JSON.stringify({ prompt, status }),
   });
 }
+
+export interface PromptHistoryClearResponse {
+  removed: number;
+}
+
+export function deletePromptEntry(index: number): Promise<PromptEntry> {
+  return apiRequest<PromptEntry>(`/api/users/me/prompt-history/${index}`, {
+    method: "DELETE",
+  });
+}
+
+export function clearPromptHistory(): Promise<PromptHistoryClearResponse> {
+  return apiRequest<PromptHistoryClearResponse>(
+    "/api/users/me/prompt-history",
+    { method: "DELETE" }
+  );
+}

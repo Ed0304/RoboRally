@@ -41,7 +41,9 @@ import {
   stepDestination,
   toastForMove,
 } from "@/lib/battery";
-import type { PlanAction } from "@/lib/agent";
+import type { PlanAction, PlanDirection } from "@/lib/agent";
+import { INSIDER_TIP_BODY, INSIDER_TIP_TITLE } from "@/lib/insiderTip";
+import { planRoute, previewOptionsFor } from "@/lib/pathfinding";
 import type {
   RouteCell,
   SearchStrategy,
@@ -83,13 +85,74 @@ import {
 import {
   newRunId,
   submissionForRun,
+  submitRunAfterCompletion,
   submitStoryRun,
 } from "@/lib/leaderboard-api";
+
+export interface CommunityRunStats {
+  moves: number;
+  remaining: number;
+  execMs: number;
+  planMs: number;
+  planCount: number;
+  actions: string[];
+  algorithm: string;
+}
+
+export interface CommunityPlay {
+  publicId: string;
+  version: number;
+  /** True once the player has a recorded success on this level. */
+  hasSuccess: boolean;
+  onFinish: (
+    outcome: "completed" | "failed",
+    stats: CommunityRunStats
+  ) => void;
+  onPrompt?: (prompt: string, status: "Success" | "Failed") => void;
+}
 
 interface MazeSceneProps {
   level: LevelData;
   /** Tutorial mode: coach messages instead of a route preview line. */
   tutorialMode?: boolean;
+  /** Community mode: skips canonical progression, reports the run. */
+  community?: CommunityPlay;
+}
+
+const COMMUNITY_PLANNERS = [
+  {
+    id: "ai",
+    label: "AI agent",
+    blurb: "Describe your mission in words; Muse Spark plans it.",
+  },
+  {
+    id: "bfs",
+    label: "BFS",
+    blurb: "Fewest moves on the grid, computed instantly.",
+  },
+  {
+    id: "dijkstra",
+    label: "Dijkstra",
+    blurb: "Lowest total battery cost, computed instantly.",
+  },
+  {
+    id: "astar",
+    label: "A*",
+    blurb: "Lowest cost with a goal-directed heuristic.",
+  },
+] as const;
+
+function pathToDirections(path: RouteCell[]): PlanDirection[] {
+  const directions: PlanDirection[] = [];
+  for (let i = 1; i < path.length; i++) {
+    const dx = path[i].x - path[i - 1].x;
+    const dz = path[i].z - path[i - 1].z;
+    if (dx === 1) directions.push("east");
+    else if (dx === -1) directions.push("west");
+    else if (dz === 1) directions.push("south");
+    else directions.push("north");
+  }
+  return directions;
 }
 
 
@@ -98,8 +161,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function MazeScene({ level, tutorialMode = false }: MazeSceneProps) {
-  return <LoadedMazeScene key={level.id} level={level} tutorialMode={tutorialMode} />;
+export default function MazeScene({ level, tutorialMode = false, community }: MazeSceneProps) {
+  const key = community
+    ? `community-${community.publicId}-v${community.version}`
+    : level.id;
+  return <LoadedMazeScene key={key} level={level} tutorialMode={tutorialMode} community={community} />;
 }
 
 // Constant top-down view: screen-up is world -Z (North) and
@@ -128,9 +194,11 @@ function FitMazeToView({ width, depth }: { width: number; depth: number }) {
 function LoadedMazeScene({
   level,
   tutorialMode = false,
+  community,
 }: {
   level: LevelData;
   tutorialMode?: boolean;
+  community?: CommunityPlay;
 }) {
 
   const maze = useMemo(() => buildMaze(level), [level]);
@@ -164,6 +232,8 @@ function LoadedMazeScene({
   const toastIdRef = useRef(0);
   // Tutorial-only coach line narrating the latest executed step.
   const [coach, setCoach] = useState<string | null>(null);
+  // Community-only planning strategy; canonical levels always use AI.
+  const [planner, setPlanner] = useState<"ai" | SearchStrategy>("ai");
   // Post-win what-if replay: ghost marker over the maze. Never touches
   // the robot, battery, status, or progression.
   const [replay, setReplay] = useState<{
@@ -197,6 +267,7 @@ function LoadedMazeScene({
   // Story run tracking: successful moves, execution wall time, and Muse
   // Spark planning time since load/restart. Powers StoryResults only.
   const runMovesRef = useRef(0);
+  const runActionsRef = useRef<string[]>([]);
   const runExecMsRef = useRef(0);
   const runPlanMsRef = useRef(0);
   const runPlanCountRef = useRef(0);
@@ -251,6 +322,7 @@ function LoadedMazeScene({
   }, []);
 
   // What-if routes, computed once per win from the canonical maze.
+  // Shown on every level, but only after a successful completion.
   const replayOptions = useMemo<StrategyComparison[] | null>(
     () => (won ? replayRoutes(maze, costs) : null),
     [won, maze, costs]
@@ -343,11 +415,30 @@ function LoadedMazeScene({
   // guest namespace when signed out). Guests never upload: their wins
   // stay on this device until they play signed in.
   useEffect(() => {
-    if (status === "won" && !completionSavedRef.current) {
-      completionSavedRef.current = true;
+    const terminal =
+      status === "won" || (community != null && status === "dead");
+    if (!terminal || completionSavedRef.current) return;
+    completionSavedRef.current = true;
+
+    if (community) {
+      community.onFinish(status === "won" ? "completed" : "failed", {
+        moves: runMovesRef.current,
+        remaining: batteryRef.current,
+        execMs: Math.round(runExecMsRef.current),
+        planMs: Math.round(runPlanMsRef.current),
+        planCount: runPlanCountRef.current,
+        actions: [...runActionsRef.current],
+        algorithm: planner,
+      });
+      return;
+    }
+
+    if (status === "won") {
       completeLevel(level.id, userId);
 
-      if (userId !== null) {
+      // Tutorial has no leaderboard: fire-and-forget is fine. Story
+      // chains the push before the run submission below.
+      if (userId !== null && tutorialMode) {
         pushCompletion(level.id).catch(() => {});
       }
 
@@ -383,11 +474,17 @@ function LoadedMazeScene({
             setStoryResult({ run, benchmarks, previous, isNewBest });
 
             // Guests never upload; authenticated submissions are
-            // best-effort and completion-gated server-side.
+            // best-effort and completion-gated server-side, so the
+            // completion push must settle before the run goes out.
             if (userId !== null) {
-              submitStoryRun(
-                submissionForRun(run, newRunId(level.id))
-              ).catch(() => {});
+              const submission = submissionForRun(
+                run,
+                newRunId(level.id)
+              );
+              void submitRunAfterCompletion(
+                () => pushCompletion(level.id),
+                () => submitStoryRun(submission)
+              );
             }
           }
         } catch {
@@ -395,7 +492,7 @@ function LoadedMazeScene({
         }
       }
     }
-  }, [status, level, level.id, userId, tutorialMode]);
+  }, [status, level, level.id, userId, tutorialMode, community, planner]);
 
   const displayedEnemies = enemyPositions.map((enemy) => {
   const alerted = isRobotDetected(robotState, [enemy], maze, 2);
@@ -520,6 +617,52 @@ function LoadedMazeScene({
     if (!execRunningRef.current || !execPausedRef.current) return;
     execPausedRef.current = false;
     setExecution((prev) => ({ ...prev, paused: false }));
+  }
+
+  // Community-only deterministic planning: the selected algorithm
+  // computes a route locally, then the shared validated executor runs
+  // it exactly like an AI plan. Never used on canonical levels.
+  function planDeterministic() {
+    if (planner === "ai" || execution.running) return;
+    if (!community?.hasSuccess) return;
+    stopExecution();
+    const begun = performance.now();
+    const result = planRoute(
+      maze,
+      { x: robotRef.current.x, z: robotRef.current.z },
+      maze.exit,
+      { ...previewOptionsFor(maze), strategy: planner, costs }
+    );
+    runPlanMsRef.current += performance.now() - begun;
+    runPlanCountRef.current += 1;
+
+    if (!result.reached) {
+      setExecution({
+        running: false,
+        paused: false,
+        currentIndex: 0,
+        total: 0,
+        message: `No route: ${result.reason}`,
+      });
+      return;
+    }
+
+    const label =
+      COMMUNITY_PLANNERS.find((entry) => entry.id === planner)?.label ??
+      planner;
+    setExecution({
+      running: false,
+      paused: false,
+      currentIndex: 0,
+      total: result.moves,
+      message: `${label} found ${result.moves} moves at ${result.cost}% — executing.`,
+    });
+    void executePlan(
+      pathToDirections(result.path).map((direction) => ({
+        op: "move" as const,
+        direction,
+      }))
+    );
   }
 
   async function executePlan(actions: PlanAction[]) {
@@ -677,7 +820,10 @@ function LoadedMazeScene({
         }
 
         const result = attemptMove(actions[index].direction);
-        if (result.moved) runMovesRef.current += 1;
+        if (result.moved) {
+          runMovesRef.current += 1;
+          runActionsRef.current.push(actions[index].direction);
+        }
 
         if (result.status !== "playing") {
           say(coachForOutcome(result.status));
@@ -769,6 +915,7 @@ function LoadedMazeScene({
     // run tracking plus any previous results panel.
     completionSavedRef.current = false;
     runMovesRef.current = 0;
+    runActionsRef.current = [];
     runExecMsRef.current = 0;
     runPlanMsRef.current = 0;
     runPlanCountRef.current = 0;
@@ -847,6 +994,115 @@ function LoadedMazeScene({
           </p>
         )}
 
+        {community && (
+          <div className="mt-3 border-t border-[#3B414B] pt-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#F2A93B]">
+              Planning strategy
+            </p>
+            {!community.hasSuccess ? (
+              <p className="mt-2 text-xs leading-5 text-[#9299A6]">
+                Complete this level once with the AI agent to unlock
+                the BFS, Dijkstra, and A* planners.
+              </p>
+            ) : (
+            <div
+              className="mt-2 flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-label="Planning strategy"
+            >
+              {COMMUNITY_PLANNERS.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={planner === entry.id}
+                  onClick={() =>
+                    setPlanner(entry.id as "ai" | SearchStrategy)
+                  }
+                  disabled={execution.running}
+                  title={entry.blurb}
+                  className={`rounded-md border px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    planner === entry.id
+                      ? "border-[#F2A93B] bg-[#F2A93B]/10 text-[#F2A93B]"
+                      : "border-[#3B414B] bg-[#292E36] text-[#F3F0E8] hover:border-[#F2A93B]"
+                  }`}
+                >
+                  {entry.label}
+                </button>
+              ))}
+            </div>
+            )}
+            <p className="mt-1 text-xs leading-5 text-[#9299A6]">
+              {
+                COMMUNITY_PLANNERS.find(
+                  (entry) => entry.id === planner
+                )?.blurb
+              }
+            </p>
+            {planner !== "ai" && status === "playing" && (
+              <button
+                type="button"
+                onClick={planDeterministic}
+                disabled={execution.running}
+                className="mt-2 w-full rounded-md bg-[#65D982] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#7FE797] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Plan with{" "}
+                {
+                  COMMUNITY_PLANNERS.find(
+                    (entry) => entry.id === planner
+                  )?.label
+                }
+              </button>
+            )}
+            {planner !== "ai" && execution.running && (
+              <div className="mt-2 flex gap-2">
+                {execution.paused ? (
+                  <button
+                    type="button"
+                    onClick={resumeExecution}
+                    className="w-full rounded-md bg-[#65D982] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#7FE797]"
+                  >
+                    Resume execution
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={pauseExecution}
+                    className="w-full rounded-md border border-[#F2A93B] bg-[#292E36] px-3 py-2 text-sm font-semibold text-[#F2A93B] transition hover:bg-[#343A44]"
+                  >
+                    Pause execution
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => stopExecution()}
+                  className="w-full rounded-md border border-[#FF7979] bg-[#2A1E22] px-3 py-2 text-sm font-semibold text-[#FF7979] transition hover:bg-[#3A262B]"
+                >
+                  Stop execution
+                </button>
+              </div>
+            )}
+            {planner !== "ai" && execution.message && (
+              <p
+                role="status"
+                className="mt-2 text-xs leading-5 text-[#ADB2BD]"
+              >
+                {execution.message}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="mt-3 rounded-md border border-[#F2A93B]/40 bg-[#292E36] p-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#F2A93B]">
+            {INSIDER_TIP_TITLE}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[#ADB2BD]">
+            {INSIDER_TIP_BODY}
+          </p>
+        </div>
+
+        {(!community || planner === "ai") && (
         <MissionPanel
           levelId={level.id}
           getSnapshot={() => ({
@@ -863,7 +1119,6 @@ function LoadedMazeScene({
             battery: batteryRef.current,
           })}
           execution={execution}
-          canExecute={status === "playing"}
           onExecute={executePlan}
           onStop={() => stopExecution()}
           onPause={pauseExecution}
@@ -872,7 +1127,11 @@ function LoadedMazeScene({
             runPlanMsRef.current += ms;
             runPlanCountRef.current += 1;
           }}
+          communityId={community?.publicId}
+          communityVersion={community?.version}
+          onPromptAttempt={community?.onPrompt}
         />
+        )}
         {tutorialMode && (
           <div className="mt-3">
             <TutorialLesson levelId={level.id} />
@@ -968,6 +1227,7 @@ function LoadedMazeScene({
             previewRoute={replayTrail}
             replayHead={replayHeadCell}
             replayExplored={replayExploredSet}
+            hideTerrainCosts={!tutorialMode && !won}
           />
           <Robot state={robotState} />
         </group>
@@ -982,7 +1242,7 @@ function LoadedMazeScene({
         </p>
       )}
 
-      {won && nextLevelId !== null && (
+      {won && nextLevelId !== null && !community && (
         <button
           onClick={() => router.push(`/game/level/${nextLevelId}`)}
           className="mt-3 w-full rounded-md bg-[#F2A93B] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#FFC15B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2A93B]"

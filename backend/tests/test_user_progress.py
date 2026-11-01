@@ -65,6 +65,20 @@ class FakeUsersCollection:
             if key != "_id"
         }
 
+    def find_one(self, filter, projection=None):
+        self.last_filter = filter
+        doc = self.docs.get(filter.get("_id"))
+
+        if doc is None:
+            return None
+
+        if not projection:
+            return dict(doc)
+
+        return {
+            key: doc.get(key) for key in projection.keys() if key != "_id"
+        }
+
     def update_one(self, filter, update):
         self.last_filter = filter
         doc = self.docs.get(filter.get("_id"))
@@ -79,6 +93,9 @@ class FakeUsersCollection:
             current = doc.setdefault(field, [])
             current.extend(spec["$each"])
             del current[: max(0, len(current) + spec["$slice"])]
+
+        for field, value in update.get("$set", {}).items():
+            doc[field] = value
 
         return Result()
 
@@ -271,6 +288,55 @@ def test_record_prompt_scoped_to_own_user(users_collection):
             PromptEntry(prompt="Go", status="Success"),
             make_user(uid=OTHER_ID),
         )
+
+    assert exc_info.value.status_code == 401
+
+
+def test_clear_prompt_history_removes_all(users_collection):
+    doc = users_collection.docs[USER_ID]
+    doc["prompt_history"] = [
+        {"prompt": "one", "status": "Success"},
+        {"prompt": "two", "status": "Failed"},
+    ]
+
+    result = users_router.clear_prompt_history(make_user())
+
+    assert result.removed == 2
+    assert doc["prompt_history"] == []
+
+
+def test_clear_prompt_history_scoped_to_own_user(users_collection):
+    with pytest.raises(HTTPException) as exc_info:
+        users_router.clear_prompt_history(make_user(uid=OTHER_ID))
+
+    assert exc_info.value.status_code == 401
+
+
+def test_delete_prompt_removes_single_entry(users_collection):
+    doc = users_collection.docs[USER_ID]
+    doc["prompt_history"] = [
+        {"prompt": "one", "status": "Success"},
+        {"prompt": "two", "status": "Failed"},
+        {"prompt": "three", "status": "Success"},
+    ]
+
+    removed = users_router.delete_prompt(1, make_user())
+
+    assert removed.prompt == "two"
+    assert [entry["prompt"] for entry in doc["prompt_history"]] == [
+        "one",
+        "three",
+    ]
+
+
+def test_delete_prompt_rejects_bad_index(users_collection):
+    with pytest.raises(HTTPException) as exc_info:
+        users_router.delete_prompt(0, make_user())
+
+    assert exc_info.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc_info:
+        users_router.delete_prompt(0, make_user(uid=OTHER_ID))
 
     assert exc_info.value.status_code == 401
 

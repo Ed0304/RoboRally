@@ -84,3 +84,23 @@ export function submitStoryRun(
     { method: "POST", body: JSON.stringify(submission) }
   );
 }
+
+/**
+ * Order the two win uploads. The leaderboard endpoint is gated on the
+ * server-side completion record, so the completion push must settle
+ * first (with one retry) before the run submission goes out.
+ * Otherwise a fast leaderboard POST is rejected and the record is
+ * lost while the player still sees a local completion. Failures stay
+ * best-effort: this never throws.
+ */
+export async function submitRunAfterCompletion(
+  pushCompletion: () => Promise<unknown>,
+  submitRun: () => Promise<unknown>
+): Promise<void> {
+  try {
+    await pushCompletion();
+  } catch {
+    await pushCompletion().catch(() => {});
+  }
+  await submitRun().catch(() => {});
+}

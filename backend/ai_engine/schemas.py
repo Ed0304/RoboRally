@@ -32,7 +32,11 @@ class PlanRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    level_id: int = Field(ge=1)
+    # 0 with community_id set means a community level; canonical
+    # levels keep positive ids.
+    level_id: int = Field(ge=0)
+    community_id: str | None = Field(default=None, max_length=64)
+    community_version: int | None = Field(default=None, ge=1)
     mission: str = Field(min_length=1, max_length=MAX_MISSION_CHARS)
     robot: RobotState
     enemies: list[EnemyState] = Field(default_factory=list)

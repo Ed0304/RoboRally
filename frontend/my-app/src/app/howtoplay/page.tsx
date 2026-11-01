@@ -1,5 +1,6 @@
 
 import Link from "next/link";
+import { INSIDER_TIP_BODY, INSIDER_TIP_TITLE } from "@/lib/insiderTip";
 
 const steps = [
   {
@@ -206,6 +207,13 @@ export default function HowtoPlayPage() {
             <li>
               <span className="mr-2 font-bold text-accent">›</span>
               When an action fails, use the new state to decide what to try next.
+            </li>
+            <li>
+              <span className="mr-2 font-bold text-accent">›</span>
+              <span className="font-bold text-foreground">
+                {INSIDER_TIP_TITLE}:
+              </span>{" "}
+              {INSIDER_TIP_BODY}
             </li>
           </ul>
         </section>

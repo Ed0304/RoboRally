@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // In-memory browser stub: bests.ts only touches window.localStorage.
 const store = new Map<string, string>();
@@ -40,6 +43,7 @@ import {
 import {
   newRunId,
   submissionForRun,
+  submitRunAfterCompletion,
 } from "@/lib/leaderboard-api";
 
 function storyLevel(id: number) {
@@ -277,6 +281,58 @@ async function main(): Promise<void> {
     assert.ok(generated.length > 4);
   }
 
+  // --- Completion push settles before the run submission ---
+  {
+    const order: string[] = [];
+    await submitRunAfterCompletion(
+      () => {
+        order.push("push");
+        return Promise.resolve();
+      },
+      () => {
+        order.push("submit");
+        return Promise.resolve();
+      }
+    );
+    assert.deepEqual(order, ["push", "submit"]);
+  }
+
+  // --- A failed push is retried once, then the run still goes out ---
+  {
+    const order: string[] = [];
+    let pushes = 0;
+    await submitRunAfterCompletion(
+      () => {
+        pushes += 1;
+        order.push(`push${pushes}`);
+        return pushes === 1
+          ? Promise.reject(new Error("hiccup"))
+          : Promise.resolve();
+      },
+      () => {
+        order.push("submit");
+        return Promise.resolve();
+      }
+    );
+    assert.deepEqual(order, ["push1", "push2", "submit"]);
+  }
+
+  // --- Best-effort preserved: double failure still never throws ---
+  {
+    const order: string[] = [];
+    await submitRunAfterCompletion(
+      () => {
+        order.push("push");
+        return Promise.reject(new Error("down"));
+      },
+      () => {
+        order.push("submit");
+        return Promise.reject(new Error("down"));
+      }
+    );
+    assert.deepEqual(order, ["push", "push", "submit"]);
+  }
+
   // --- Corrupt or foreign stored data is ignored, never thrown ---
   {
     store.set(bestsKey("userC"), "not-json");
@@ -293,6 +349,19 @@ async function main(): Promise<void> {
       })
     );
     assert.deepEqual(loadBests("userC"), {});
+  }
+
+  // --- Wins use the ordered chain, not concurrent uploads ---
+  {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+    const mazeScene = readFileSync(
+      join(root, "components/maze/MazeScene.tsx"),
+      "utf8"
+    );
+    assert.ok(
+      mazeScene.includes("submitRunAfterCompletion("),
+      "story wins chain the completion push before the run"
+    );
   }
 
   console.log("All story-results checks passed!");

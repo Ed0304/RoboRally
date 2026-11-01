@@ -27,6 +27,8 @@ interface MazeTilesProps {
   replayHead?: { x: number; z: number } | null;
   /** States the replayed search expanded, as 'x,z' keys. Backdrop only. */
   replayExplored?: ReadonlySet<string>;
+  /** Hide weighted-terrain identity: rough/drain render as plain floor. */
+  hideTerrainCosts?: boolean;
 }
 
 type BarrierOrientation = "horizontal" | "vertical";
@@ -453,10 +455,12 @@ function SpecialTile({
   tile,
   maze,
   doorOpen,
+  hideTerrainCosts,
 }: {
   tile: MazeTile;
   maze: MazeDefinition;
   doorOpen: boolean;
+  hideTerrainCosts: boolean;
 }) {
   switch (tile.type) {
     case "laser":
@@ -488,10 +492,14 @@ function SpecialTile({
       return <TriggerTile tile={tile} active={doorOpen} />;
 
     case "rough":
-      return <TerrainPlate tile={tile} color="#B45309" />;
+      return hideTerrainCosts ? null : (
+        <TerrainPlate tile={tile} color="#B45309" />
+      );
 
     case "drain":
-      return <TerrainPlate tile={tile} color="#7C3AED" />;
+      return hideTerrainCosts ? null : (
+        <TerrainPlate tile={tile} color="#7C3AED" />
+      );
 
     default:
       return null;
@@ -515,6 +523,7 @@ export default function MazeTiles({
   batteryLabels,
   replayHead,
   replayExplored,
+  hideTerrainCosts,
 }: MazeTilesProps) {
   return (
     <>
@@ -619,6 +628,7 @@ export default function MazeTiles({
             tile={tile}
             maze={maze}
             doorOpen={doorOpen}
+            hideTerrainCosts={hideTerrainCosts ?? false}
           />
         </group>
       ))}

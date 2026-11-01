@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
+  clearPromptHistory,
+  deletePromptEntry,
   fetchUserProfile,
   type UserProfile,
 } from "@/lib/user";
@@ -19,6 +21,10 @@ export default function PlayerInfoPage() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
+  const [deleting, setDeleting] = useState<number | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   useEffect(() => {
     if (!user) {
@@ -56,6 +62,50 @@ export default function PlayerInfoPage() {
   const email = profile?.email ?? user?.email ?? null;
   const completed = profile?.completed_levels ?? [];
   const history = profile?.prompt_history ?? [];
+
+  async function handleDeleteEntry(storedIndex: number) {
+    if (deleting !== null || clearing) return;
+    setDeleting(storedIndex);
+    setHistoryError("");
+    try {
+      await deletePromptEntry(storedIndex);
+      setProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              prompt_history: prev.prompt_history.filter(
+                (_, position) => position !== storedIndex
+              ),
+            }
+          : prev
+      );
+    } catch (err) {
+      setHistoryError(
+        err instanceof Error ? err.message : "Could not delete that entry."
+      );
+    } finally {
+      setDeleting(null);
+    }
+  }
+
+  async function handleClearAll() {
+    if (clearing || deleting !== null) return;
+    setClearing(true);
+    setHistoryError("");
+    try {
+      await clearPromptHistory();
+      setProfile((prev) =>
+        prev ? { ...prev, prompt_history: [] } : prev
+      );
+      setConfirmClear(false);
+    } catch (err) {
+      setHistoryError(
+        err instanceof Error ? err.message : "Could not clear history."
+      );
+    } finally {
+      setClearing(false);
+    }
+  }
 
   return (
     <main className="flex flex-1 justify-center bg-background px-4 py-10 text-foreground sm:px-6">
@@ -175,12 +225,65 @@ export default function PlayerInfoPage() {
             </div>
 
             <div className="rounded-2xl border border-border bg-surface p-6">
-              <h2 className="text-lg font-bold">Prompt History</h2>
-              <p className="mt-1 text-xs leading-5 text-muted">
-                Whether each mission prompt produced an executable plan.
-                Completing the mission itself is tracked under
-                Completed Levels.
-              </p>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-bold">Prompt History</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted">
+                    Whether each mission prompt produced an executable
+                    plan. Completing the mission itself is tracked
+                    under Completed Levels.
+                  </p>
+                </div>
+                {user && history.length > 0 && !confirmClear && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClear(true)}
+                    disabled={clearing || deleting !== null}
+                    className="shrink-0 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-muted transition hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+
+              {confirmClear && (
+                <div className="mt-3 rounded-xl border border-danger/40 bg-background p-3">
+                  <p className="text-sm font-semibold">
+                    Delete all {history.length}{" "}
+                    {history.length === 1 ? "entry" : "entries"}?
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    This cannot be undone.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleClearAll}
+                      disabled={clearing}
+                      className="rounded-lg bg-danger px-4 py-2 text-xs font-bold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {clearing ? "Clearing…" : "Yes, clear all"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClear(false)}
+                      disabled={clearing}
+                      className="rounded-lg border border-border px-4 py-2 text-xs font-semibold transition hover:border-accent/60 disabled:opacity-50"
+                    >
+                      Keep history
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {historyError && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded-xl border border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger"
+                >
+                  {historyError}
+                </p>
+              )}
 
               {!user ? (
                 <p className="mt-4 text-sm leading-6 text-muted">
@@ -195,16 +298,31 @@ export default function PlayerInfoPage() {
               ) : (
                 <ul className="mt-4 max-h-64 space-y-2 overflow-y-auto">
                   {history
-                    .slice()
+                    .map((entry, storedIndex) => ({ entry, storedIndex }))
                     .reverse()
-                    .map((entry, index) => (
+                    .map(({ entry, storedIndex }) => (
                       <li
-                        key={`${entry.prompt}-${index}`}
+                        key={`${entry.prompt}-${storedIndex}`}
                         className="rounded-lg border border-border bg-background p-3"
                       >
-                        <p className="break-words text-sm font-medium">
-                          {entry.prompt}
-                        </p>
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="min-w-0 flex-1 break-words text-sm font-medium">
+                            {entry.prompt}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteEntry(storedIndex)}
+                            disabled={
+                              deleting !== null || clearing
+                            }
+                            aria-label={`Delete prompt: ${entry.prompt}`}
+                            className="shrink-0 rounded-lg border border-border px-2 py-1 text-xs font-semibold text-muted transition hover:border-danger/60 hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deleting === storedIndex
+                              ? "…"
+                              : "Delete"}
+                          </button>
+                        </div>
                         <p
                           className={`mt-1 text-xs font-bold uppercase tracking-wider ${
                             entry.status === "Success"

@@ -27,13 +27,17 @@ interface MissionPanelProps {
   levelId: number;
   getSnapshot: () => MissionSnapshot;
   execution: ExecutionState;
-  canExecute: boolean;
   onExecute: (actions: PlanAction[]) => void;
   onStop: () => void;
   onPause: () => void;
   onResume: () => void;
   /** Reports wall time of each successful plan request, in ms. */
   onPlanTiming?: (ms: number) => void;
+  /** Community levels plan against the author's layout, by version. */
+  communityId?: string;
+  communityVersion?: number;
+  /** Per-attempt prompt record for community runs, alongside history. */
+  onPromptAttempt?: (prompt: string, status: "Success" | "Failed") => void;
 }
 
 const directionArrow: Record<PlanDirection, string> = {
@@ -47,12 +51,14 @@ export default function MissionPanel({
   levelId,
   getSnapshot,
   execution,
-  canExecute,
   onExecute,
   onStop,
   onPause,
   onResume,
   onPlanTiming,
+  communityId,
+  communityVersion,
+  onPromptAttempt,
 }: MissionPanelProps) {
   const [mission, setMission] = useState("");
   const [loading, setLoading] = useState(false);
@@ -98,17 +104,19 @@ export default function MissionPanel({
         enemies: snapshot.enemies,
         door_open: snapshot.doorOpen,
         battery: snapshot.battery,
+        community_id: communityId,
+        community_version: communityVersion,
       });
       onPlanTiming?.(performance.now() - begun);
 
       setPlan(response);
-      recordPromptAttempt(
-        mission.trim(),
-        response.actions.length > 0 ? "Success" : "Failed"
-      ).catch(() => {});
+      const attemptStatus =
+        response.actions.length > 0 ? "Success" : "Failed";
+      recordPromptAttempt(mission.trim(), attemptStatus).catch(() => {});
+      onPromptAttempt?.(mission.trim(), attemptStatus);
 
       // No extra confirmation click: a validated non-empty plan starts
-      // moving through the same gates as a manual Execute. Empty plans
+      // moving through the validated executor immediately. Empty plans
       // stay on screen with the recovery actions below.
       if (response.actions.length > 0) {
         onExecute(response.actions);
@@ -123,6 +131,7 @@ export default function MissionPanel({
             : "Planning failed. Please try again."
       );
       recordPromptAttempt(mission.trim(), "Failed").catch(() => {});
+      onPromptAttempt?.(mission.trim(), "Failed");
     } finally {
       setLoading(false);
       submittingRef.current = false;
@@ -154,13 +163,6 @@ export default function MissionPanel({
   function handleRephrase() {
     textareaRef.current?.focus();
   }
-
-  const canStartExecution =
-    canExecute &&
-    !execution.running &&
-    !loading &&
-    plan !== null &&
-    plan.actions.length > 0;
 
   const canRegenerate =
     !loading && !execution.running && mission.trim().length > 0;
@@ -303,7 +305,7 @@ export default function MissionPanel({
             </ol>
           )}
 
-          {execution.running ? (
+          {execution.running && (
             <div className="mt-2 flex gap-2">
               {execution.paused ? (
                 <button
@@ -327,14 +329,6 @@ export default function MissionPanel({
                 Stop execution
               </button>
             </div>
-          ) : (
-            <button
-              onClick={() => plan && onExecute(plan.actions)}
-              disabled={!canStartExecution}
-              className="mt-2 w-full rounded-md bg-[#65D982] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#7FE797] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Execute Plan
-            </button>
           )}
 
           {execution.message && (

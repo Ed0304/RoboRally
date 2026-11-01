@@ -10,6 +10,7 @@ const publicLinks = [
   { label: "Home", href: "/" },
   { label: "How to Play", href: "/howtoplay" },
   { label: "Learn", href: "/learn" },
+  { label: "Community", href: "/community" },
   { label: "Leaderboard", href: "/leaderboard" },
   { label: "Profile", href: "/playerdetails" }
 ];

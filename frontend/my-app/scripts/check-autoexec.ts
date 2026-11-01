@@ -86,6 +86,16 @@ assert.doesNotMatch(
   /review it before executing/,
   "stale confirm-before-execute wording removed"
 );
+assert.doesNotMatch(
+  missionPanel,
+  /Execute Plan/,
+  "no manual re-execute button: plans auto-start once, stale re-runs impossible"
+);
+assert.doesNotMatch(
+  missionPanel,
+  /canStartExecution/,
+  "no manual execute gate remains"
+);
 
 // --- Pause / resume controls exist and are wired ---
 assert.match(missionPanel, /Pause execution/);

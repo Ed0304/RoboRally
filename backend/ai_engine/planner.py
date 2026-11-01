@@ -18,7 +18,10 @@ from ai_engine.schemas import (
     PlanResponse,
     RejectedAction,
 )
+from authentication.common import db
 from game_logic.levels import levels_collection
+
+community_levels_collection = db["community_levels"]
 
 logger = logging.getLogger("roborally.ai_engine")
 
@@ -69,6 +72,44 @@ def load_level(level_id: int) -> dict:
         )
 
     return level
+
+
+def load_community_level(public_id: str, version: int | None) -> dict:
+    """Load a published community layout, pinned to its version.
+
+    Planning is public, so only published levels are plannable.
+    Returns a canonical-shaped dict the rest of the pipeline uses.
+    """
+    level = community_levels_collection.find_one({"public_id": public_id})
+
+    if level is None or level.get("status") != "published":
+        raise HTTPException(
+            status_code=404,
+            detail="Community level not found.",
+        )
+
+    pinned = version or level.get("version", 1)
+    layout = level["layout"]
+
+    if pinned != level.get("version", 1):
+        layout = None
+
+        for snapshot in level.get("history", []):
+            if snapshot.get("version") == pinned:
+                layout = snapshot["layout"]
+
+        if layout is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Version {pinned} does not exist for this level.",
+            )
+
+    return {
+        "id": 0,
+        "name": level.get("name", "Community level"),
+        "goal": "Get to the finish line",
+        "layout": layout,
+    }
 
 
 def build_user_prompt(
@@ -190,11 +231,16 @@ def _request_segment(
 
 
 def plan_mission(request: PlanRequest) -> PlanResponse:
-    level = load_level(request.level_id)
+    if request.community_id:
+        level = load_community_level(
+            request.community_id, request.community_version
+        )
+    else:
+        level = load_level(request.level_id)
     logger.info(
-        "plan request: level=%d mission_chars=%d robot=(%d, %d) "
+        "plan request: level=%s mission_chars=%d robot=(%d, %d) "
         "enemies=%d door_open=%s model=%s",
-        request.level_id,
+        request.community_id or request.level_id,
         len(request.mission),
         request.robot.x,
         request.robot.z,

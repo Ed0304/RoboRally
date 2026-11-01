@@ -55,6 +55,10 @@ class CompletionResponse(BaseModel):
     completed_levels: list[int]
 
 
+class PromptHistoryClearResponse(BaseModel):
+    removed: int
+
+
 def _sanitized_history(raw: object) -> list[dict]:
     """Keep only well-shaped entries so legacy documents cannot break
     the response contract."""
@@ -172,3 +176,80 @@ def record_prompt(
         )
 
     return payload
+
+
+@router.delete(
+    "/me/prompt-history",
+    response_model=PromptHistoryClearResponse,
+)
+def clear_prompt_history(
+    user: Annotated[dict, Depends(get_current_user)],
+) -> PromptHistoryClearResponse:
+    """Delete the user's entire prompt history."""
+    doc = users_collection.find_one(
+        {"_id": ObjectId(user["id"])},
+        {"prompt_history": 1},
+    )
+
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists.",
+        )
+
+    removed = len(doc.get("prompt_history") or [])
+    users_collection.update_one(
+        {"_id": ObjectId(user["id"])},
+        {"$set": {"prompt_history": []}},
+    )
+
+    return PromptHistoryClearResponse(removed=removed)
+
+
+@router.delete(
+    "/me/prompt-history/{index}",
+    response_model=PromptEntry,
+)
+def delete_prompt(
+    index: int,
+    user: Annotated[dict, Depends(get_current_user)],
+) -> PromptEntry:
+    """Delete one prompt entry by its stored position (oldest first)."""
+    doc = users_collection.find_one(
+        {"_id": ObjectId(user["id"])},
+        {"prompt_history": 1},
+    )
+
+    if doc is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User no longer exists.",
+        )
+
+    history = doc.get("prompt_history") or []
+
+    if not 0 <= index < len(history):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Prompt entry not found.",
+        )
+
+    users_collection.update_one(
+        {"_id": ObjectId(user["id"])},
+        {
+            "$set": {
+                "prompt_history": [
+                    entry
+                    for position, entry in enumerate(history)
+                    if position != index
+                ]
+            }
+        },
+    )
+
+    clean = _sanitized_history([history[index]])
+
+    if clean:
+        return PromptEntry(**clean[0])
+
+    return PromptEntry(prompt="(unreadable entry)", status="Failed")

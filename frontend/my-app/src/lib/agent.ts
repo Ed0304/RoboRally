@@ -15,6 +15,8 @@ export interface PlanRequest {
   enemies: { x: number; z: number }[];
   door_open: boolean;
   battery: number;
+  community_id?: string;
+  community_version?: number;
 }
 
 export interface RejectedAction {

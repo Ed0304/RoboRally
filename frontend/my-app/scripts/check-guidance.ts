@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { levels } from "../data/levels";
 import { buildMaze } from "@/lib/maze";
+import { INSIDER_TIP_BODY, INSIDER_TIP_TITLE } from "@/lib/insiderTip";
 import { canMoveTo } from "@/lib/gamelogic";
 import type { PlanDirection, PlanResponse } from "@/lib/agent";
 import {
@@ -207,6 +211,66 @@ async function main(): Promise<void> {
   );
   assert.equal(classifyPlanningError("boom"), "planning");
   assert.equal(classifyPlanningError(null), "planning");
+
+  // --- Insider tip: incremental plans beat giant ones ---
+  assert.equal(INSIDER_TIP_TITLE, "Insider tip");
+  for (const phrase of [
+    "wall",
+    "where the robot stopped",
+    "small plans",
+    "large mazes",
+  ]) {
+    assert.ok(
+      INSIDER_TIP_BODY.includes(phrase),
+      `tip mentions "${phrase}"`
+    );
+  }
+
+  // Rendered on every game level and on How to Play.
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const mazeScene = readFileSync(
+    join(root, "components/maze/MazeScene.tsx"),
+    "utf8"
+  );
+  const howtoplay = readFileSync(
+    join(root, "src/app/howtoplay/page.tsx"),
+    "utf8"
+  );
+  assert.ok(
+    mazeScene.includes("{INSIDER_TIP_BODY}"),
+    "every level shows the insider tip"
+  );
+  assert.ok(
+    howtoplay.includes("{INSIDER_TIP_BODY}"),
+    "how to play shows the insider tip"
+  );
+
+  // --- Prompt history deletion: per-entry + clear-all wiring ---
+  const playerDetails = readFileSync(
+    join(root, "src/app/playerdetails/page.tsx"),
+    "utf8"
+  );
+  const userClient = readFileSync(join(root, "src/lib/user.ts"), "utf8");
+  for (const token of [
+    "deletePromptEntry",
+    "clearPromptHistory",
+    'method: "DELETE"',
+  ]) {
+    assert.ok(userClient.includes(token), `user client has ${token}`);
+  }
+  for (const token of [
+    "deletePromptEntry",
+    "clearPromptHistory",
+    "Clear all",
+    "Yes, clear all",
+    "Delete prompt:",
+    "storedIndex",
+  ]) {
+    assert.ok(
+      playerDetails.includes(token),
+      `player details page has ${token}`
+    );
+  }
 
   console.log("All guidance checks passed!");
 }
