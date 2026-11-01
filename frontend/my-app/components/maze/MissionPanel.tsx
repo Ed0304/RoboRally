@@ -30,6 +30,8 @@ interface MissionPanelProps {
   canExecute: boolean;
   onExecute: (actions: PlanAction[]) => void;
   onStop: () => void;
+  onPause: () => void;
+  onResume: () => void;
   /** Reports wall time of each successful plan request, in ms. */
   onPlanTiming?: (ms: number) => void;
 }
@@ -48,6 +50,8 @@ export default function MissionPanel({
   canExecute,
   onExecute,
   onStop,
+  onPause,
+  onResume,
   onPlanTiming,
 }: MissionPanelProps) {
   const [mission, setMission] = useState("");
@@ -102,6 +106,13 @@ export default function MissionPanel({
         mission.trim(),
         response.actions.length > 0 ? "Success" : "Failed"
       ).catch(() => {});
+
+      // No extra confirmation click: a validated non-empty plan starts
+      // moving through the same gates as a manual Execute. Empty plans
+      // stay on screen with the recovery actions below.
+      if (response.actions.length > 0) {
+        onExecute(response.actions);
+      }
     } catch (err) {
       const kind = classifyPlanningError(err);
       setError(
@@ -249,8 +260,8 @@ export default function MissionPanel({
             )}
             <p className="mt-1 text-xs leading-5 text-[#9299A6]">
               This is the agent&apos;s interpretation of your words —
-              review it before executing. It doesn&apos;t guarantee
-              success.
+              the robot starts moving on its own once the plan is
+              validated. It doesn&apos;t guarantee success.
             </p>
           </div>
 
@@ -293,12 +304,29 @@ export default function MissionPanel({
           )}
 
           {execution.running ? (
-            <button
-              onClick={onStop}
-              className="mt-2 w-full rounded-md border border-[#FF7979] bg-[#2A1E22] px-3 py-2 text-sm font-semibold text-[#FF7979] transition hover:bg-[#3A262B]"
-            >
-              Stop execution
-            </button>
+            <div className="mt-2 flex gap-2">
+              {execution.paused ? (
+                <button
+                  onClick={onResume}
+                  className="w-full rounded-md bg-[#65D982] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#7FE797]"
+                >
+                  Resume execution
+                </button>
+              ) : (
+                <button
+                  onClick={onPause}
+                  className="w-full rounded-md border border-[#F2A93B] bg-[#292E36] px-3 py-2 text-sm font-semibold text-[#F2A93B] transition hover:bg-[#343A44]"
+                >
+                  Pause execution
+                </button>
+              )}
+              <button
+                onClick={onStop}
+                className="w-full rounded-md border border-[#FF7979] bg-[#2A1E22] px-3 py-2 text-sm font-semibold text-[#FF7979] transition hover:bg-[#3A262B]"
+              >
+                Stop execution
+              </button>
+            </div>
           ) : (
             <button
               onClick={() => plan && onExecute(plan.actions)}

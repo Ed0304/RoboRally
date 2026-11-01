@@ -23,6 +23,10 @@ interface MazeTilesProps {
   previewRoute?: ReadonlySet<string>;
   /** Projected remaining battery % by 'x,z' key; labels only. */
   batteryLabels?: ReadonlyMap<string, number>;
+  /** Post-win replay head: a ghost marker traveling above the trail. */
+  replayHead?: { x: number; z: number } | null;
+  /** States the replayed search expanded, as 'x,z' keys. Backdrop only. */
+  replayExplored?: ReadonlySet<string>;
 }
 
 type BarrierOrientation = "horizontal" | "vertical";
@@ -509,6 +513,8 @@ export default function MazeTiles({
   doorOpen,
   previewRoute,
   batteryLabels,
+  replayHead,
+  replayExplored,
 }: MazeTilesProps) {
   return (
     <>
@@ -554,6 +560,20 @@ export default function MazeTiles({
             </mesh>
           )}
 
+          {/* Explored backdrop: states the replayed search expanded */}
+          {replayExplored?.has(`${tile.x},${tile.z}`) &&
+            tile.type !== "wall" && (
+              <mesh position={[tile.x, 0.005, tile.z]}>
+                <boxGeometry args={[0.92, 0.02, 0.92]} />
+                <meshStandardMaterial
+                  color="#3D5A73"
+                  transparent
+                  opacity={0.6}
+                  roughness={0.9}
+                />
+              </mesh>
+            )}
+
           {/* Route preview marker (visual only, never moves the robot) */}
           {previewRoute?.has(`${tile.x},${tile.z}`) &&
             tile.type !== 'wall' && (
@@ -563,6 +583,21 @@ export default function MazeTiles({
                   color='#22D3EE'
                   emissive='#0EA5E9'
                   emissiveIntensity={1.1}
+                />
+              </mesh>
+            )}
+
+          {/* Replay head: floats above the trail, same marker idiom */}
+          {replayHead !== null &&
+            replayHead !== undefined &&
+            replayHead.x === tile.x &&
+            replayHead.z === tile.z && (
+              <mesh position={[tile.x, 0.34, tile.z]}>
+                <octahedronGeometry args={[0.22]} />
+                <meshStandardMaterial
+                  color="#F2A93B"
+                  emissive="#F2A93B"
+                  emissiveIntensity={1.4}
                 />
               </mesh>
             )}

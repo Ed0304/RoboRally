@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { buildMaze } from "@/lib/maze";
 import { costsForMaze } from "@/lib/battery";
-import { DIJKSTRA_LAB } from "@/lib/labMazes";
+import { COMPARE_LAB } from "@/lib/labMazes";
 import AlgorithmCompareSection from "../../../components/learn/AlgorithmCompareSection";
 
 const LESSONS = [
@@ -29,7 +29,7 @@ const LESSONS = [
 ];
 
 export default function LearnPage() {
-  const maze = useMemo(() => buildMaze(DIJKSTRA_LAB), []);
+  const maze = useMemo(() => buildMaze(COMPARE_LAB), []);
   const costs = useMemo(() => costsForMaze(maze), [maze]);
 
   return (
@@ -88,7 +88,7 @@ export default function LearnPage() {
         <AlgorithmCompareSection
           maze={maze}
           costs={costs}
-          mazeName={DIJKSTRA_LAB.name}
+          mazeName={COMPARE_LAB.name}
         />
 
         <div className="flex flex-col gap-3 sm:flex-row">

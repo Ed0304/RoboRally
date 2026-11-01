@@ -53,4 +53,27 @@ export const ASTAR_LAB: LevelData = {
   ],
 };
 
-export const LAB_MAZES: LevelData[] = [BFS_LAB, DIJKSTRA_LAB, ASTAR_LAB];
+export const COMPARE_LAB: LevelData = {
+  id: 104,
+  name: "The Wide Detour",
+  description:
+    "Weighted comparison maze: an expensive shortcut, a cheap corridor, and open ground that tempts blind search.",
+  layout: [
+    "############",
+    "#S..55555.E#",
+    "#.########.#",
+    "#..........#",
+    "#.########.#",
+    "#..........#",
+    "#..........#",
+    "#..........#",
+    "############",
+  ],
+};
+
+export const LAB_MAZES: LevelData[] = [
+  BFS_LAB,
+  DIJKSTRA_LAB,
+  ASTAR_LAB,
+  COMPARE_LAB,
+];

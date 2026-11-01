@@ -21,6 +21,7 @@ import MazeTiles from "./MazeTiles";
 import Robot from "./Robot";
 import Compass from "./Compass";
 import MissionPanel from "./MissionPanel";
+import ReplayPanel from "./ReplayPanel";
 import TutorialLesson from "./TutorialLesson";
 import StoryResults, { type StoryResultData } from "./StoryResults";
 
@@ -31,26 +32,35 @@ import {
   type GameStatus,
 } from "@/lib/gamelogic";
 import {
-  planRoute,
-  previewOptionsFor,
-  type RouteCell,
-  type SearchStrategy,
-} from "@/lib/pathfinding";
-import {
   BATTERY_MAX,
   canAfford,
   costsForMaze,
   deductBattery,
   estimatePlanCost,
   moveCost,
-  prefixCosts,
   stepDestination,
   toastForMove,
 } from "@/lib/battery";
 import type { PlanAction } from "@/lib/agent";
+import type {
+  RouteCell,
+  SearchStrategy,
+  StrategyComparison,
+} from "@/lib/pathfinding";
+import {
+  EXPLORED_STEP_MS,
+  REPLAY_STEP_MS,
+  replayCells,
+  replayRoutes,
+} from "@/lib/replay";
 import {
   EXEC_STEP_DELAY_MS,
   IDLE_EXECUTION,
+  PAUSE_POLL_MS,
+  coachForBlocked,
+  coachForDepleted,
+  coachForMove,
+  coachForOutcome,
   describeProgress,
   verifyStepPrereqs,
   type ExecutionState,
@@ -78,8 +88,8 @@ import {
 
 interface MazeSceneProps {
   level: LevelData;
-  /** Tutorial-only route preview; never moves the robot. */
-  showPreview?: boolean;
+  /** Tutorial mode: coach messages instead of a route preview line. */
+  tutorialMode?: boolean;
 }
 
 
@@ -88,8 +98,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export default function MazeScene({ level, showPreview = false }: MazeSceneProps) {
-  return <LoadedMazeScene key={level.id} level={level} showPreview={showPreview} />;
+export default function MazeScene({ level, tutorialMode = false }: MazeSceneProps) {
+  return <LoadedMazeScene key={level.id} level={level} tutorialMode={tutorialMode} />;
 }
 
 // Constant top-down view: screen-up is world -Z (North) and
@@ -117,10 +127,10 @@ function FitMazeToView({ width, depth }: { width: number; depth: number }) {
 
 function LoadedMazeScene({
   level,
-  showPreview = false,
+  tutorialMode = false,
 }: {
   level: LevelData;
-  showPreview?: boolean;
+  tutorialMode?: boolean;
 }) {
 
   const maze = useMemo(() => buildMaze(level), [level]);
@@ -147,14 +157,23 @@ function LoadedMazeScene({
 
   const [status, setStatus] = useState<GameStatus>("playing");
   const [doorOpen, setDoorOpen] = useState(false);
-  const [preview, setPreview] = useState<{ cells: Set<string>; path: RouteCell[]; steps: number; cost: number; strategy: SearchStrategy } | null>(null);
-  const [algorithm, setAlgorithm] = useState<SearchStrategy>("bfs");
   const [battery, setBattery] = useState(BATTERY_MAX);
   const batteryRef = useRef(BATTERY_MAX);
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastIdRef = useRef(0);
-  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  // Tutorial-only coach line narrating the latest executed step.
+  const [coach, setCoach] = useState<string | null>(null);
+  // Post-win what-if replay: ghost marker over the maze. Never touches
+  // the robot, battery, status, or progression.
+  const [replay, setReplay] = useState<{
+    strategy: SearchStrategy;
+    path: RouteCell[];
+    routeHead: number;
+    order: RouteCell[];
+    exploredHead: number;
+    phase: "exploring" | "routing";
+  } | null>(null);
 
   // Refs let the patrol timer and plan executor access latest state.
   const robotRef = useRef(robotState);
@@ -173,6 +192,7 @@ function LoadedMazeScene({
     useState<ExecutionState>(IDLE_EXECUTION);
   const execCancelRef = useRef(false);
   const execRunningRef = useRef(false);
+  const execPausedRef = useRef(false);
   const completionSavedRef = useRef(false);
   // Story run tracking: successful moves, execution wall time, and Muse
   // Spark planning time since load/restart. Powers StoryResults only.
@@ -230,6 +250,95 @@ function LoadedMazeScene({
     };
   }, []);
 
+  // What-if routes, computed once per win from the canonical maze.
+  const replayOptions = useMemo<StrategyComparison[] | null>(
+    () => (won ? replayRoutes(maze, costs) : null),
+    [won, maze, costs]
+  );
+
+  // Two-phase stepper. First the explored overlay grows in true
+  // expansion order; then the route trail animates under the ghost
+  // marker. Cleanup stops the timer on unmount or level change.
+  useEffect(() => {
+    if (!replay) return;
+    if (replay.phase === "exploring") {
+      if (replay.exploredHead >= replay.order.length - 1) {
+        setReplay((prev) =>
+          prev === null
+            ? null
+            : {
+                ...prev,
+                phase: "routing",
+                routeHead: 0,
+                exploredHead: prev.order.length - 1,
+              }
+        );
+        return;
+      }
+      const timer = setTimeout(() => {
+        setReplay((prev) =>
+          prev === null
+            ? null
+            : { ...prev, exploredHead: prev.exploredHead + 1 }
+        );
+      }, EXPLORED_STEP_MS);
+      return () => clearTimeout(timer);
+    }
+    if (replay.routeHead >= replay.path.length - 1) return;
+    const timer = setTimeout(() => {
+      setReplay((prev) =>
+        prev === null ? null : { ...prev, routeHead: prev.routeHead + 1 }
+      );
+    }, REPLAY_STEP_MS);
+    return () => clearTimeout(timer);
+  }, [replay]);
+
+  const replayExploring =
+    replay !== null && replay.phase === "exploring";
+  const replayTrail = useMemo(
+    () =>
+      replay && replay.phase === "routing"
+        ? replayCells(replay.path, replay.routeHead)
+        : undefined,
+    [replay]
+  );
+  const replayExploredSet = useMemo(
+    () =>
+      replay ? replayCells(replay.order, replay.exploredHead) : undefined,
+    [replay]
+  );
+  const replayHeadCell =
+    replay && replay.phase === "routing"
+      ? replay.path[replay.routeHead]
+      : null;
+  const replayFinished =
+    replay !== null &&
+    replay.phase === "routing" &&
+    replay.routeHead >= replay.path.length - 1;
+
+  function startReplay(strategy: SearchStrategy) {
+    const found = replayOptions?.find(
+      (entry) => entry.strategy === strategy
+    );
+    if (!found || !found.result.reached) return;
+    const reduced =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setReplay({
+      strategy,
+      path: found.result.path,
+      routeHead: reduced ? found.result.path.length - 1 : 0,
+      order: found.result.order,
+      exploredHead: reduced ? found.result.order.length - 1 : 0,
+      phase: reduced ? "routing" : "exploring",
+    });
+  }
+
+  function stopReplay() {
+    setReplay(null);
+  }
+
   // Record completion once, scoped to the signed-in account (or the
   // guest namespace when signed out). Guests never upload: their wins
   // stay on this device until they play signed in.
@@ -245,7 +354,7 @@ function LoadedMazeScene({
       // Story-only results: compare the confirmed win against
       // deterministic benchmarks and record personal bests. Benchmark
       // failures must never break the win flow.
-      if (!showPreview) {
+      if (!tutorialMode) {
         try {
           const benchmarks = benchmarkLevel(level);
           const optimal = optimalCostEntry(benchmarks);
@@ -286,7 +395,7 @@ function LoadedMazeScene({
         }
       }
     }
-  }, [status, level, level.id, userId, showPreview]);
+  }, [status, level, level.id, userId, tutorialMode]);
 
   const displayedEnemies = enemyPositions.map((enemy) => {
   const alerted = isRobotDetected(robotState, [enemy], maze, 2);
@@ -338,7 +447,8 @@ function LoadedMazeScene({
     return () => window.clearInterval(timer);
   }, [status, routes, maze]);
 
-  // Single shared movement path for keyboard input and plan execution.
+  // Single shared movement path for plan execution; the AI agent is
+  // the sole driver and every step flows through here.
   const attemptMove = useCallback(
     (
       direction: RobotState["direction"]
@@ -392,16 +502,54 @@ function LoadedMazeScene({
   // validated plan action and keys are always free for typing.
   function stopExecution(message = "Execution stopped.") {
     execCancelRef.current = true;
-    setExecution((prev) => ({ ...prev, running: false, message }));
+    execPausedRef.current = false;
+    setExecution((prev) => ({ ...prev, running: false, paused: false, message }));
+  }
+
+  function pauseExecution() {
+    if (!execRunningRef.current || execPausedRef.current) return;
+    execPausedRef.current = true;
+    setExecution((prev) => ({
+      ...prev,
+      paused: true,
+      message: "Paused — resume to continue, or stop to cancel.",
+    }));
+  }
+
+  function resumeExecution() {
+    if (!execRunningRef.current || !execPausedRef.current) return;
+    execPausedRef.current = false;
+    setExecution((prev) => ({ ...prev, paused: false }));
   }
 
   async function executePlan(actions: PlanAction[]) {
-    if (execRunningRef.current) return;
-    clearRoutePreview();
+    // Auto-start can race a winding-down run (submit cancels, then the
+    // fresh plan arrives): cancel it and wait briefly rather than drop
+    // the new plan or overlap two steppers.
+    if (execRunningRef.current) {
+      execCancelRef.current = true;
+      execPausedRef.current = false;
+      for (let i = 0; i < 50 && execRunningRef.current; i++) {
+        await sleep(PAUSE_POLL_MS);
+      }
+      if (execRunningRef.current) {
+        setExecution({
+          running: false,
+          paused: false,
+          currentIndex: 0,
+          total: actions.length,
+          message: "An execution is still stopping — try again in a moment.",
+        });
+        return;
+      }
+    }
+
+    if (tutorialMode) setCoach(null);
 
     if (statusRef.current !== "playing") {
       setExecution({
         running: false,
+        paused: false,
         currentIndex: 0,
         total: actions.length,
         message: "Start execution only while the mission is active.",
@@ -412,6 +560,7 @@ function LoadedMazeScene({
     if (actions.length === 0) {
       setExecution({
         running: false,
+        paused: false,
         currentIndex: 0,
         total: 0,
         message: "Nothing to execute.",
@@ -430,6 +579,7 @@ function LoadedMazeScene({
     if (!canAfford(batteryRef.current, estimate.cost)) {
       setExecution({
         running: false,
+        paused: false,
         currentIndex: 0,
         total: actions.length,
         message: `Plan needs approx. ${estimate.cost}% battery but only ${batteryRef.current}% remains. Restart to recharge.`,
@@ -439,6 +589,7 @@ function LoadedMazeScene({
 
     execRunningRef.current = true;
     execCancelRef.current = false;
+    execPausedRef.current = false;
     const execBegun = performance.now();
 
     let expected = {
@@ -450,8 +601,17 @@ function LoadedMazeScene({
       setExecution(state);
     };
 
+    // Tutorial narration for real step events; silent in Story mode.
+    const say = (text: string) => {
+      if (tutorialMode) setCoach(text);
+    };
+
     try {
       for (let index = 0; index < actions.length; index++) {
+        // Pause holds the stepper at step boundaries; cancel still wins.
+        while (execPausedRef.current && !execCancelRef.current) {
+          await sleep(PAUSE_POLL_MS);
+        }
         if (execCancelRef.current) return;
 
         const verdict = verifyStepPrereqs({
@@ -463,6 +623,7 @@ function LoadedMazeScene({
         if (!verdict.ok) {
           finish({
             running: false,
+            paused: false,
             currentIndex: index,
             total: actions.length,
             message: verdict.reason,
@@ -472,6 +633,7 @@ function LoadedMazeScene({
 
         finish({
           running: true,
+          paused: false,
           currentIndex: index,
           total: actions.length,
           message: describeProgress(index, actions.length),
@@ -491,6 +653,7 @@ function LoadedMazeScene({
         if (!recheck.ok) {
           finish({
             running: false,
+            paused: false,
             currentIndex: index,
             total: actions.length,
             message: recheck.reason,
@@ -502,8 +665,10 @@ function LoadedMazeScene({
         const stepCost = moveCost(costs, dest.x, dest.z);
 
         if (!canAfford(batteryRef.current, stepCost)) {
+          say(coachForDepleted());
           finish({
             running: false,
+            paused: false,
             currentIndex: index,
             total: actions.length,
             message: `Battery depleted at step ${index + 1} — ${batteryRef.current}% left, step needs ${stepCost}%. Restart to recharge.`,
@@ -515,8 +680,10 @@ function LoadedMazeScene({
         if (result.moved) runMovesRef.current += 1;
 
         if (result.status !== "playing") {
+          say(coachForOutcome(result.status));
           finish({
             running: false,
+            paused: false,
             currentIndex: index + 1,
             total: actions.length,
             message:
@@ -528,8 +695,10 @@ function LoadedMazeScene({
         }
 
         if (!result.moved) {
+          say(coachForBlocked());
           finish({
             running: false,
+            paused: false,
             currentIndex: index,
             total: actions.length,
             message:
@@ -542,6 +711,17 @@ function LoadedMazeScene({
         const remaining = deductBattery(batteryRef.current, stepCost);
         batteryRef.current = remaining;
         setBattery(remaining);
+        const landed = maze.tiles.find(
+          (tile) => tile.x === robotRef.current.x && tile.z === robotRef.current.z
+        );
+        say(
+          coachForMove(
+            actions[index].direction,
+            stepCost,
+            remaining,
+            landed?.type ?? "floor"
+          )
+        );
         const toastText = toastForMove(stepCost, remaining);
         if (toastText) {
           if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -558,6 +738,7 @@ function LoadedMazeScene({
 
       finish({
         running: false,
+        paused: false,
         currentIndex: actions.length,
         total: actions.length,
         message: `Plan complete (${actions.length}/${actions.length} steps).`,
@@ -568,50 +749,9 @@ function LoadedMazeScene({
     }
   }
 
-  function showRoutePreview() {
-    const result = planRoute(
-      maze,
-      { x: robotRef.current.x, z: robotRef.current.z },
-      maze.exit,
-      { ...previewOptionsFor(maze), strategy: algorithm, costs }
-    );
-
-    if (!result.reached) {
-      setPreview(null);
-      setPreviewMessage(result.reason);
-      return;
-    }
-
-    setPreview({
-      cells: new Set(result.path.map((cell) => `${cell.x},${cell.z}`)),
-      path: result.path,
-      steps: result.moves,
-      cost: result.cost,
-      strategy: algorithm,
-    });
-    setPreviewMessage(null);
-  }
-
-  function clearRoutePreview() {
-    setPreview(null);
-    setPreviewMessage(null);
-  }
-
-  const batteryLabels = useMemo(() => {
-    if (!preview) return undefined;
-    const labels = new Map<string, number>();
-    const cumulative = prefixCosts(preview.path, costs);
-    for (let i = 1; i < preview.path.length; i++) {
-      if (cumulative[i - 1] > battery) break;
-      const cell = preview.path[i];
-      labels.set(`${cell.x},${cell.z}`, battery - cumulative[i - 1]);
-    }
-    return labels;
-  }, [preview, costs, battery]);
-
   function restart() {
     execCancelRef.current = true;
-    clearRoutePreview();
+    execPausedRef.current = false;
 
     const initialRobot: RobotState = {
       ...maze.start,
@@ -639,6 +779,8 @@ function LoadedMazeScene({
     setBattery(BATTERY_MAX);
     setDoorOpen(false);
     setExecution(IDLE_EXECUTION);
+    setCoach(null);
+    setReplay(null);
     setStoryResult(null);
     if (toastTimerRef.current) {
       clearTimeout(toastTimerRef.current);
@@ -695,22 +837,7 @@ function LoadedMazeScene({
           </span>
         </div>
 
-        {won && (
-          <p className="mt-3 font-bold text-[#65D982]">
-            Level completed!
-          </p>
-        )}
-
-        {won && nextLevelId !== null && (
-          <button
-            onClick={() => router.push(`/game/level/${nextLevelId}`)}
-            className="mt-3 w-full rounded-md bg-[#F2A93B] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#FFC15B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2A93B]"
-          >
-            Next Level →
-          </button>
-        )}
-
-        {won && !showPreview && storyResult && (
+        {won && !tutorialMode && storyResult && (
           <StoryResults levelName={level.name} result={storyResult} />
         )}
 
@@ -718,61 +845,6 @@ function LoadedMazeScene({
           <p className="mt-3 font-bold text-[#FF7979]">
             ROBOT DESTROYED — MISSION FAILED
           </p>
-        )}
-
-        <button
-          onClick={restart}
-          title="Reset the robot to its starting position and recharge the battery to try again"
-          className="mt-3 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-semibold text-[#F3F0E8] transition hover:border-[#F2A93B] hover:bg-[#343A44]"
-        >
-          ↺ Restart position
-        </button>
-
-
-        {showPreview && status === "playing" && (
-          <label className="mt-3 block text-xs text-[#ADB2BD]">
-            Planning algorithm
-            <select
-              value={algorithm}
-              onChange={(event) => {
-                setAlgorithm(event.target.value as SearchStrategy);
-                clearRoutePreview();
-              }}
-              className="mt-1 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-2 py-2 text-sm text-[#F3F0E8]"
-            >
-              <option value="bfs">BFS — fewest moves</option>
-              <option value="dijkstra">Dijkstra — lowest battery cost</option>
-              <option value="astar">A* — lowest battery cost (guided)</option>
-            </select>
-          </label>
-        )}
-
-        {showPreview && status === "playing" && !preview && (
-          <button
-            onClick={showRoutePreview}
-            className="mt-3 w-full rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20"
-          >
-            Preview Route
-          </button>
-        )}
-
-        {showPreview && status === "playing" && preview && (
-          <button
-            onClick={clearRoutePreview}
-            className="mt-3 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-medium text-[#F3F0E8] transition hover:border-cyan-400/50"
-          >
-            Clear Preview
-          </button>
-        )}
-
-        {showPreview && preview && (
-          <p className="mt-2 text-xs text-cyan-200/90">
-            {preview.strategy === "bfs" ? "BFS" : preview.strategy === "dijkstra" ? "Dijkstra" : "A*"} preview: {preview.steps} {preview.steps === 1 ? "step" : "steps"} · approx. {preview.cost}% battery from here. Preview only — the robot does not move until you execute a plan.
-          </p>
-        )}
-
-        {showPreview && previewMessage && (
-          <p className="mt-2 text-xs text-[#FFB020]">{previewMessage}</p>
         )}
 
         <MissionPanel
@@ -794,21 +866,44 @@ function LoadedMazeScene({
           canExecute={status === "playing"}
           onExecute={executePlan}
           onStop={() => stopExecution()}
+          onPause={pauseExecution}
+          onResume={resumeExecution}
           onPlanTiming={(ms) => {
             runPlanMsRef.current += ms;
             runPlanCountRef.current += 1;
           }}
         />
-        {showPreview && (
+        {tutorialMode && (
           <div className="mt-3">
             <TutorialLesson levelId={level.id} />
           </div>
+        )}
+
+        {won && replayOptions && (
+          <ReplayPanel
+            routes={replayOptions}
+            active={replay?.strategy ?? null}
+            finished={replayFinished}
+            exploring={replayExploring}
+            onSelect={startReplay}
+            onClose={stopReplay}
+          />
         )}
     </div>
     <div className="relative h-[520px] w-full">
       <div className="pointer-events-none absolute right-4 top-4 z-10">
         <Compass direction={robotState.direction} />
       </div>
+      {tutorialMode && coach && (
+        <div className="pointer-events-none absolute left-4 top-4 z-10 max-w-[62%]">
+          <p
+            role="status"
+            className="rounded-lg border border-cyan-400/40 bg-slate-950/90 px-3 py-2 text-xs leading-5 text-cyan-100"
+          >
+            {coach}
+          </p>
+        </div>
+      )}
       {toast && (
         <div key={toast.id} className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center">
           <div className="rounded-lg border border-[#F2A93B]/50 bg-slate-950/90 px-4 py-2 text-sm font-semibold text-[#F2A93B]">
@@ -870,8 +965,9 @@ function LoadedMazeScene({
             maze={maze}
             enemyPositions={displayedEnemies}
             doorOpen={doorOpen}
-            previewRoute={preview?.cells}
-            batteryLabels={batteryLabels}
+            previewRoute={replayTrail}
+            replayHead={replayHeadCell}
+            replayExplored={replayExploredSet}
           />
           <Robot state={robotState} />
         </group>
@@ -879,9 +975,30 @@ function LoadedMazeScene({
       </Canvas>
     </div>
 
+    <div className="w-full border-t border-[#3B414B] bg-[#191C22] p-4 text-[#F3F0E8]">
+      {won && (
+        <p className="font-bold text-[#65D982]">
+          Level completed!
+        </p>
+      )}
 
+      {won && nextLevelId !== null && (
+        <button
+          onClick={() => router.push(`/game/level/${nextLevelId}`)}
+          className="mt-3 w-full rounded-md bg-[#F2A93B] px-3 py-2 text-sm font-semibold text-[#17191D] transition hover:bg-[#FFC15B] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#F2A93B]"
+        >
+          Next Level →
+        </button>
+      )}
 
-
+      <button
+        onClick={restart}
+        title="Reset the robot to its starting position and recharge the battery to try again"
+        className="mt-3 w-full rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-2 text-sm font-semibold text-[#F3F0E8] transition hover:border-[#F2A93B] hover:bg-[#343A44]"
+      >
+        ↺ Restart position
+      </button>
+    </div>
     </div>
   );
 }

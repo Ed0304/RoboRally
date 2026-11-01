@@ -111,6 +111,8 @@ async function main(): Promise<void> {
     assert.ok(bfs.moves < dijkstra.moves);
     assert.ok(bfs.cost > dijkstra.cost);
     assert.equal(astar.cost, dijkstra.cost);
+    // Same optimal route, shown with effort counts in the replay panel.
+    assert.deepEqual([dijkstra.expanded, astar.expanded], [26, 22]);
     assert.notDeepEqual(
       bfs.path.map((cell) => `${cell.x},${cell.z}`),
       dijkstra.path.map((cell) => `${cell.x},${cell.z}`)
@@ -143,6 +145,8 @@ async function main(): Promise<void> {
       astar.expanded < bfs.expanded,
       `A* explores less (${astar.expanded} < ${bfs.expanded})`
     );
+    // The lesson's visible payoff: same optimum, clearly less search.
+    assert.deepEqual([dijkstra.expanded, astar.expanded], [38, 21]);
   }
 
   // --- Planning never mutates the maze or game state ---

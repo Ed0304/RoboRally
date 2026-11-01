@@ -19,6 +19,15 @@ const TITLES: Record<SearchStrategy, string> = {
   astar: "A* — cheapest cost, guided",
 };
 
+/** One-line node-prioritization rule, matching the planner's pop rule. */
+const STRATEGY_RULE: Record<SearchStrategy, string> = {
+  bfs: "Expands cells in arrival order, wave by wave.",
+  dijkstra:
+    "Expands the unfinished cell with the lowest cost so far, g(n).",
+  astar:
+    "Expands the lowest cost so far plus estimated remaining, f(n) = g(n) + h(n).",
+};
+
 function StrategyPanel({
   maze,
   comparison,
@@ -40,6 +49,9 @@ function StrategyPanel({
   return (
     <div className="rounded-xl border border-border bg-background p-4">
       <h3 className="font-bold">{TITLES[strategy]}</h3>
+      <p className="mt-1 text-xs leading-5 text-muted">
+        {STRATEGY_RULE[strategy]}
+      </p>
       <div className="mt-3">
         <MazeGrid
           maze={maze}
@@ -109,6 +121,20 @@ export default function AlgorithmCompareSection({
 
   const [bfs, dijkstra, astar] = comparisons;
   const allReached = comparisons.every((c) => c.result.reached);
+  // Dijkstra and A* are both optimal, so they often agree on cost;
+  // compare the actual cell sequences before claiming one route.
+  const sameOptimum =
+    dijkstra.result.reached &&
+    astar.result.reached &&
+    dijkstra.result.moves === astar.result.moves &&
+    dijkstra.result.cost === astar.result.cost;
+  const sameCells =
+    sameOptimum &&
+    dijkstra.result.path.map(cellKey).join(" ") ===
+      astar.result.path.map(cellKey).join(" ");
+  const effortDiffers =
+    sameOptimum &&
+    dijkstra.result.expanded !== astar.result.expanded;
   const sameMoves =
     allReached &&
     bfs.result.moves === dijkstra.result.moves &&
@@ -182,6 +208,37 @@ export default function AlgorithmCompareSection({
             . BFS minimizes move count while Dijkstra and A* minimize
             battery cost, so they can legitimately choose different
             routes.
+          </p>
+        )}
+        {sameOptimum && sameCells && effortDiffers && (
+          <p>
+            Dijkstra and A* traced the identical{" "}
+            {dijkstra.result.moves}-move route at ≈
+            {dijkstra.result.cost}% — the same optimum, found two
+            ways. Dijkstra expanded {dijkstra.result.expanded}{" "}
+            states by reaching outward in cost order with no sense of
+            direction, while A* expanded {astar.result.expanded}{" "}
+            states by aiming each expansion at the exit with its
+            Manhattan hint. Same green route, different blue search:
+            the coverage is the lesson here, not the path.
+          </p>
+        )}
+        {sameOptimum && sameCells && !effortDiffers && (
+          <p>
+            Dijkstra and A* traced the identical route and expanded
+            the same {dijkstra.result.expanded} states — on this maze
+            even the search matched. The heuristic only saves effort
+            where it can rule cells out; it never changes the optimum.
+          </p>
+        )}
+        {sameOptimum && !sameCells && (
+          <p>
+            Dijkstra and A* reached the same optimum (
+            {dijkstra.result.moves} moves at ≈{dijkstra.result.cost}
+            %) through different cells — tied frontiers can break
+            either way. Dijkstra expanded {dijkstra.result.expanded}{" "}
+            states, A* {astar.result.expanded}. Equal cost with
+            different routes is still agreement on the optimum.
           </p>
         )}
         <p className="text-xs leading-5">

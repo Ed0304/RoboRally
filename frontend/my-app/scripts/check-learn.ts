@@ -9,6 +9,7 @@ import {
   type SearchStrategy,
 } from "@/lib/pathfinding";
 import {
+  cellKey,
   gradePrediction,
   shortestPathLength,
   traceBfs,
@@ -16,7 +17,7 @@ import {
 import { BFS_LAB, LAB_MAZES } from "@/lib/labMazes";
 
 function route(
-  id: 101 | 102 | 103,
+  id: 101 | 102 | 103 | 104,
   strategy: SearchStrategy
 ) {
   const def = LAB_MAZES.find((entry) => entry.id === id);
@@ -36,7 +37,7 @@ function route(
     levels.map((level) => JSON.stringify(level.layout))
   );
 
-  assert.equal(LAB_MAZES.length, 3);
+  assert.equal(LAB_MAZES.length, 4);
 
   for (const lab of LAB_MAZES) {
     assert.ok(
@@ -56,6 +57,7 @@ function route(
     101: new Set(["#", ".", "S", "E"]),
     102: new Set(["#", ".", "S", "E", "3", "5"]),
     103: new Set(["#", ".", "S", "E"]),
+    104: new Set(["#", ".", "S", "E", "3", "5"]),
   };
 
   for (const lab of LAB_MAZES) {
@@ -167,6 +169,36 @@ function route(
   );
   assert.equal(astar.cost, dijkstra.cost);
   assert.ok(astar.expanded < bfs.expanded);
+}
+
+// --- Comparison lab: same optimum, visibly different search ---
+{
+  const bfs = route(104, "bfs");
+  const dijkstra = route(104, "dijkstra");
+  const astar = route(104, "astar");
+
+  assert.deepEqual([bfs.moves, bfs.cost], [9, 29]);
+  assert.deepEqual([dijkstra.moves, dijkstra.cost], [13, 13]);
+  assert.deepEqual([astar.moves, astar.cost], [13, 13]);
+  assert.deepEqual(
+    [bfs.expanded, dijkstra.expanded, astar.expanded],
+    [31, 44, 17]
+  );
+
+  // Dijkstra and A* trace the identical optimal route here; the
+  // lesson is the search coverage, which must stay clearly apart.
+  assert.deepEqual(
+    dijkstra.path.map(cellKey),
+    astar.path.map(cellKey)
+  );
+  assert.notDeepEqual(
+    bfs.path.map(cellKey),
+    dijkstra.path.map(cellKey)
+  );
+  assert.ok(
+    dijkstra.expanded > astar.expanded * 2,
+    "Dijkstra explores more than twice the states A* does"
+  );
 }
 
 console.log("Learn lab checks passed!");
