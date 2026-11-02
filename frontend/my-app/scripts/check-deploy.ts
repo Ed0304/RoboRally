@@ -23,11 +23,16 @@ const backendEnvExample = readFileSync(
   "utf8"
 );
 
-// --- Same-origin proxy: /api/* forwards to the backend ---
+// --- Same-origin proxy: /api/* and /auth/* forward to the backend ---
 assert.match(
   nextConfig,
   /source: "\/api\/:path\*"/,
   "rewrite captures /api/* without colliding with app routes"
+);
+assert.match(
+  nextConfig,
+  /source: "\/auth\/:path\*"/,
+  "rewrite captures /auth/* (login/register/me/logout live there)"
 );
 assert.match(
   nextConfig,
