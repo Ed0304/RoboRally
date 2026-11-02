@@ -33,7 +33,7 @@ REQUEST_TIMEOUT_SECONDS = 300.0
 # hard levels need, with headroom for a deep trace plus the visible
 # JSON (~300 tokens for 12 moves). Deliberately not uncapped: a stuck
 # model must still fail loudly instead of burning budget silently.
-MAX_OUTPUT_TOKENS = 64000
+MAX_OUTPUT_TOKENS = 1000000
 # Reasoning effort: "low" (fast, cheap, less accurate), "medium"
 # (default), "high" (slow, expensive, more accurate).
 # Ref: https://dev.meta.ai/docs/structured-output#reasoning-effort
