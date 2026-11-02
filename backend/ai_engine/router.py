@@ -1,18 +1,24 @@
 
 """Mission-planning API endpoints."""
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Depends
 
 from ai_engine import planner
 from ai_engine.schemas import PlanRequest, PlanResponse
+from authentication.common import get_optional_user
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
 
 
 @router.post("/plan", response_model=PlanResponse)
-def create_plan(payload: PlanRequest) -> PlanResponse:
+def create_plan(
+    payload: PlanRequest,
+    user: Annotated[dict | None, Depends(get_optional_user)],
+) -> PlanResponse:
     """Convert a natural-language mission into a validated action plan."""
-    return planner.plan_mission(payload)
+    return planner.plan_mission(payload, user=user)
 
 
 @router.get("/health")

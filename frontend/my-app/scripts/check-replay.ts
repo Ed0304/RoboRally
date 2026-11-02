@@ -160,6 +160,25 @@ assert.match(
   /#3D5A73/,
   "explored backdrop reuses the learn-lab explored blue"
 );
+
+// Explored markers must render above weighted-terrain plates: the
+// backdrop is wider than the plate, so a buried marker reads as a
+// hollow blue outline instead of a filled square.
+const terrainPlate = mazeTiles.match(
+  /function TerrainPlate\([\s\S]*?position=\{\[tile\.x, ([\d.]+), tile\.z\]\}[\s\S]*?boxGeometry args=\{\[([\d.]+), ([\d.]+), ([\d.]+)\]\}/
+);
+assert.ok(terrainPlate, "terrain plate geometry found in MazeTiles");
+const explored = mazeTiles.match(
+  /\{\/\* Explored backdrop[\s\S]*?position=\{\[tile\.x, ([\d.]+), tile\.z\]\}[\s\S]*?boxGeometry args=\{\[([\d.]+), ([\d.]+), ([\d.]+)\]\}/
+);
+assert.ok(explored, "explored backdrop geometry found in MazeTiles");
+const terrainTop =
+  Number(terrainPlate[1]) + Number(terrainPlate[3]) / 2;
+const exploredBottom = Number(explored[1]) - Number(explored[3]) / 2;
+assert.ok(
+  exploredBottom > terrainTop,
+  `explored markers sit above terrain plates (bottom ${exploredBottom} > top ${terrainTop})`
+);
 assert.match(
   mazeScene,
   /order: found\.result\.order/,

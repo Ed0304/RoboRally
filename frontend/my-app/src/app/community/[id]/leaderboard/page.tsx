@@ -7,6 +7,7 @@ import { useAuth } from "@/context/AuthContext";
 import {
   fetchCommunityLeaderboard,
   fetchCommunityLevel,
+  fetchEditableCommunityLevel,
   fetchMyCommunityAttempts,
   type AttemptRecord,
   type CommunityLeaderboard,
@@ -62,8 +63,15 @@ function CommunityLeaderboardContent() {
     setLoading(true);
     setError("");
     try {
+      // Owners can open their unpublished levels: the public view 404s
+      // for those, so fall back to the owner-only editable view.
+      const infoPromise = fetchCommunityLevel(id).catch(() =>
+        user
+          ? fetchEditableCommunityLevel(id)
+          : Promise.reject(new Error("Unable to load level."))
+      );
       const [info, data] = await Promise.all([
-        fetchCommunityLevel(id),
+        infoPromise,
         fetchCommunityLeaderboard(id, metric, version, page),
       ]);
       setLevel(info);
@@ -76,7 +84,7 @@ function CommunityLeaderboardContent() {
     } finally {
       setLoading(false);
     }
-  }, [id, metric, version, page]);
+  }, [id, metric, version, page, user]);
 
   useEffect(() => {
     load();
@@ -122,6 +130,10 @@ function CommunityLeaderboardContent() {
               </Link>
             </p>
           )}
+          <p className="mt-2 text-sm text-muted">
+            Rankings cover AI-planned runs only — BFS, Dijkstra, and
+            A* completions stay in your personal history.
+          </p>
         </header>
 
         <div className="flex flex-wrap gap-3">

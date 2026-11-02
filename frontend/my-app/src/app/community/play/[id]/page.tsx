@@ -59,7 +59,6 @@ function CommunityPlayContent() {
     | { state: "error"; message: string; stats: CommunityRunStats }
     | { state: "guest"; stats: CommunityRunStats }
   >({ state: "idle" });
-  const submittedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +66,6 @@ function CommunityPlayContent() {
     setSubmission({ state: "idle" });
     setPrompts([]);
     setIsOwner(false);
-    submittedRef.current = false;
 
     // Owners can test unpublished levels: the public view 404s for
     // those, so fall back to the owner-only editable view.
@@ -142,8 +140,9 @@ function CommunityPlayContent() {
       stats: CommunityRunStats
     ) => {
       void outcome;
-      if (phase.name !== "ready" || submittedRef.current) return;
-      submittedRef.current = true;
+      // Every genuine finish submits: MazeScene fires onFinish once per
+      // run, so restarts and retries each record their own attempt.
+      if (phase.name !== "ready") return;
 
       if (!user) {
         setSubmission({ state: "guest", stats });

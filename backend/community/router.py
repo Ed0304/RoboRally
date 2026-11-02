@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 
-from authentication.common import db, get_current_user
+from authentication.common import db, get_current_user, get_optional_user
 from community import validation as v
 
 router = APIRouter(prefix="/api/community", tags=["community"])
@@ -252,10 +252,13 @@ def _check_solvable(width, height, layout) -> None:
 
 
 def _best_for_level(public_id: str) -> dict | None:
+    # Rankings honor original AI-planned work only: completions driven
+    # by the deterministic planners (bfs/dijkstra/astar) are recorded
+    # in personal history but never ranked.
     rows = [
         doc
         for doc in community_attempts_collection.find(
-            {"level_id": public_id, "outcome": "completed"}
+            {"level_id": public_id, "outcome": "completed", "algorithm": "ai"}
         )
     ]
 
@@ -371,12 +374,34 @@ def list_levels(
     q: Annotated[str | None, Query(max_length=60)] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=PAGE_SIZE_MAX)] = 10,
+    user: Annotated[dict | None, Depends(get_optional_user)] = None,
 ) -> LevelCardPage:
-    """Browse published community levels with cards and pagination."""
+    """Browse published community levels with cards and pagination.
+
+    Signed-in owners also see their own unpublished levels inline:
+    unpublish hides from the public, not from the creator.
+    """
     needle = (q or "").strip().lower()
     docs = [
         doc
         for doc in community_levels_collection.find({"status": "published"})
+    ]
+
+    if user is not None:
+        seen = {doc["public_id"] for doc in docs}
+        own = [
+            doc
+            for doc in community_levels_collection.find(
+                {"creator_id": user["id"]}
+            )
+            if doc.get("status") != "deleted"
+            and doc["public_id"] not in seen
+        ]
+        docs.extend(own)
+
+    docs = [
+        doc
+        for doc in docs
         if category is None or category in doc.get("categories", [])
         if not needle or needle in doc.get("name", "").lower()
     ]
@@ -711,7 +736,12 @@ def read_leaderboard(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=PAGE_SIZE_MAX)] = 10,
 ) -> LeaderboardData:
-    """Best verified completion per player. Public, no private data."""
+    """Best AI-planned completion per player. Public, no private data.
+
+    Deterministic-planner (bfs/dijkstra/astar) completions are recorded
+    under personal history but excluded here: the board ranks original
+    AI-planned work only.
+    """
     _public_or_404(public_id)
 
     try:
@@ -725,7 +755,7 @@ def read_leaderboard(
     rows = [
         doc
         for doc in community_attempts_collection.find(
-            {"level_id": public_id, "outcome": "completed"}
+            {"level_id": public_id, "outcome": "completed", "algorithm": "ai"}
         )
         if pinned is None or doc.get("version") == pinned
     ]

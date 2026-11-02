@@ -74,15 +74,28 @@ def load_level(level_id: int) -> dict:
     return level
 
 
-def load_community_level(public_id: str, version: int | None) -> dict:
-    """Load a published community layout, pinned to its version.
+def load_community_level(
+    public_id: str, version: int | None, user: dict | None = None
+) -> dict:
+    """Load a community layout, pinned to its version.
 
-    Planning is public, so only published levels are plannable.
-    Returns a canonical-shaped dict the rest of the pipeline uses.
+    Planning is public, so published levels are plannable by anyone.
+    Unpublished levels stay plannable for their creator (unpublish
+    hides from the public, it does not delete); deleted levels are
+    gone for everyone. Returns a canonical-shaped dict the rest of
+    the pipeline uses.
     """
     level = community_levels_collection.find_one({"public_id": public_id})
 
-    if level is None or level.get("status") != "published":
+    if level is None or level.get("status") == "deleted":
+        raise HTTPException(
+            status_code=404,
+            detail="Community level not found.",
+        )
+
+    if level.get("status") != "published" and (
+        user is None or level.get("creator_id") != user.get("id")
+    ):
         raise HTTPException(
             status_code=404,
             detail="Community level not found.",
@@ -230,10 +243,12 @@ def _request_segment(
         ) from None
 
 
-def plan_mission(request: PlanRequest) -> PlanResponse:
+def plan_mission(
+    request: PlanRequest, user: dict | None = None
+) -> PlanResponse:
     if request.community_id:
         level = load_community_level(
-            request.community_id, request.community_version
+            request.community_id, request.community_version, user=user
         )
     else:
         level = load_level(request.level_id)

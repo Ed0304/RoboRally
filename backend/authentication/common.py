@@ -130,3 +130,16 @@ def get_current_user(request: Request) -> dict:
         "completed_levels": user.get("completed_levels") or [],
         "prompt_history": user.get("prompt_history") or [],
     }
+
+
+def get_optional_user(request: Request) -> dict | None:
+    """Best-effort session user for endpoints guests may call.
+
+    Returns None when no valid session rides along, so public flows
+    (guest planning on canonical levels) keep working while signed-in
+    owners gain access to their own unpublished work.
+    """
+    try:
+        return get_current_user(request)
+    except HTTPException:
+        return None

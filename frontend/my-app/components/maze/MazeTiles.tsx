@@ -569,10 +569,12 @@ export default function MazeTiles({
             </mesh>
           )}
 
-          {/* Explored backdrop: states the replayed search expanded */}
+          {/* Explored backdrop: states the replayed search expanded.
+              Floats above weighted-terrain plates so the marker reads
+              as a filled square on rough/drain tiles too. */}
           {replayExplored?.has(`${tile.x},${tile.z}`) &&
             tile.type !== "wall" && (
-              <mesh position={[tile.x, 0.005, tile.z]}>
+              <mesh position={[tile.x, 0.045, tile.z]}>
                 <boxGeometry args={[0.92, 0.02, 0.92]} />
                 <meshStandardMaterial
                   color="#3D5A73"

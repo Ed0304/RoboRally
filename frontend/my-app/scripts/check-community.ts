@@ -145,9 +145,19 @@ assert.match(play, /submitCommunityAttempt/);
 assert.match(play, /fetchMyCommunityAttempts/);
 assert.match(play, /hasSuccess/);
 assert.match(play, /community=\{community\}/);
+assert.doesNotMatch(
+  play,
+  /submittedRef/,
+  "every genuine finish submits: no once-per-mount gate may swallow restarts or retries"
+);
 assert.match(board, /fetchCommunityLeaderboard/);
 assert.match(board, /fetchMyCommunityAttempts/);
 assert.match(board, /Rank/);
+assert.match(
+  board,
+  /fetchEditableCommunityLevel/,
+  "board page falls back to the owner view for unpublished levels"
+);
 assert.match(header, /\/community/);
 
 // --- Terrain costs stay hidden until the win (story + community) ---
@@ -164,6 +174,13 @@ assert.ok(
 
 // --- Backend serves the community API ---
 assert.match(backendMain, /community/);
+
+// --- Owners see their unpublished levels in the main list ---
+assert.match(
+  backendCommunity,
+  /get_optional_user/,
+  "level listing resolves the signed-in viewer for owner visibility"
+);
 
 // --- Name search: backend q filter + browse search box ---
 assert.match(backendCommunity, /q: Annotated\[str \| None/);
@@ -210,5 +227,16 @@ assert.match(backendCommunity, /def list_my_levels/);
 assert.match(play, /fetchEditableCommunityLevel/);
 assert.match(play, /Test mode/);
 assert.match(play, /\/community\/edit\//);
+
+// --- Rankings honor original AI-planned work only ---
+assert.match(
+  backendCommunity,
+  /"algorithm": "ai"/,
+  "community rankings exclude deterministic-planner runs"
+);
+assert.ok(
+  board.includes("AI-planned runs only"),
+  "board page states rankings cover AI-planned runs only"
+);
 
 console.log("Community checks passed!");

@@ -313,6 +313,35 @@ def test_list_excludes_unpublished(fakes):
         community_router.read_level(created.public_id)
 
 
+def test_list_shows_own_unpublished_to_owner(fakes):
+    owner = make_user()
+    created = publish(fakes, owner)
+    community_router.unpublish_level(created.public_id, owner)
+
+    # Guests and strangers still see nothing.
+    assert community_router.list_levels().total_levels == 0
+    stranger = community_router.list_levels(user=make_user(USER_B))
+    assert stranger.total_levels == 0
+
+    # The owner sees it in the main list, flagged unpublished.
+    own = community_router.list_levels(user=owner)
+    assert own.total_levels == 1
+    assert own.levels[0].public_id == created.public_id
+    assert own.levels[0].status == "unpublished"
+
+    # Search covers it like any other visible level.
+    found = community_router.list_levels(user=owner, q="first")
+    assert found.total_levels == 1
+
+
+def test_list_dedupes_own_published_levels(fakes):
+    owner = make_user()
+    created = publish(fakes, owner)
+
+    own = community_router.list_levels(user=owner)
+    assert [c.public_id for c in own.levels] == [created.public_id]
+
+
 def test_update_metadata_keeps_version(fakes):
     created = publish(fakes)
     updated = community_router.update_level(
@@ -521,6 +550,7 @@ def seed_board(fakes, public_id):
         public_id,
         make_user(USER_A),
         attempt_id="a1",
+        algorithm="ai",
         exec_ms=3000,
     )
     submit(
@@ -528,6 +558,7 @@ def seed_board(fakes, public_id):
         public_id,
         make_user(USER_A),
         attempt_id="a2",
+        algorithm="ai",
         actions=["east", "east", "south", "south"],
         exec_ms=1000,
     )
@@ -536,6 +567,7 @@ def seed_board(fakes, public_id):
         public_id,
         make_user(USER_B),
         attempt_id="b1",
+        algorithm="ai",
         actions=["east", "east", "south", "south"],
         exec_ms=2000,
     )
@@ -557,7 +589,55 @@ def test_leaderboard_best_per_player_with_tiebreaks(fakes):
     # Same moves/cost: faster execution wins.
     assert [e.username for e in board.entries] == ["op-aaaa", "op-bbbb"]
     assert [e.rank for e in board.entries] == [1, 2]
-    assert board.entries[0].algorithm == "bfs"
+    assert board.entries[0].algorithm == "ai"
+
+
+def test_leaderboard_ranks_ai_planned_runs_only(fakes):
+    created = publish(fakes)
+    # Better metrics, but deterministic planners: never ranked.
+    submit(
+        fakes,
+        created.public_id,
+        make_user(USER_A),
+        attempt_id="fast-bfs",
+        algorithm="bfs",
+        actions=["east", "east", "south", "south"],
+        exec_ms=500,
+    )
+    submit(
+        fakes,
+        created.public_id,
+        make_user(USER_B),
+        attempt_id="fast-dijkstra",
+        algorithm="dijkstra",
+        actions=["east", "east", "south", "south"],
+        exec_ms=600,
+    )
+    # Worse metrics, but original AI-planned work: ranked alone.
+    submit(
+        fakes,
+        created.public_id,
+        make_user("cccc00000000000000000003"),
+        attempt_id="slow-ai",
+        algorithm="ai",
+        actions=["east", "west", "east", "east", "south", "south"],
+        exec_ms=9000,
+    )
+
+    board = community_router.read_leaderboard(created.public_id)
+    assert board.total_players == 1
+    assert [e.username for e in board.entries] == ["op-cccc"]
+    assert board.entries[0].moves == 6
+
+    cards = community_router.list_levels()
+    assert cards.levels[0].best["username"] == "op-cccc"
+
+    # Unranked runs are still recorded in personal history.
+    mine = community_router.read_my_attempts(
+        created.public_id, make_user(USER_A)
+    )
+    assert [a.attempt_id for a in mine] == ["fast-bfs"]
+    assert mine[0].outcome == "completed"
 
 
 def test_leaderboard_metric_and_version_filters(fakes):
@@ -628,6 +708,52 @@ def test_planner_loads_published_community_layout(fakes, monkeypatch):
     community_router.unpublish_level(created.public_id, make_user())
     with pytest.raises(HTTPException) as exc:
         planner.load_community_level(created.public_id, None)
+    assert exc.value.status_code == 404
+
+
+def test_community_planning_owner_bypass_on_unpublished(
+    fakes, monkeypatch
+):
+    levels, _ = fakes
+    monkeypatch.setattr(
+        planner, "community_levels_collection", levels
+    )
+    owner = make_user()
+    created = publish(fakes, owner)
+    assert (
+        planner.load_community_level(
+            created.public_id, None, user=None
+        )["layout"]
+        == LAYOUT
+    )
+
+    community_router.unpublish_level(created.public_id, owner)
+
+    # Owner keeps full access: unpublish hides from the public only.
+    assert (
+        planner.load_community_level(
+            created.public_id, None, user=owner
+        )["layout"]
+        == LAYOUT
+    )
+
+    # Strangers and guests still see nothing.
+    with pytest.raises(HTTPException) as exc:
+        planner.load_community_level(
+            created.public_id, None, user=make_user(USER_B)
+        )
+    assert exc.value.status_code == 404
+
+    with pytest.raises(HTTPException) as exc:
+        planner.load_community_level(created.public_id, None, user=None)
+    assert exc.value.status_code == 404
+
+    # Deleted is gone for everyone, owner included.
+    community_router.delete_level(created.public_id, owner)
+    with pytest.raises(HTTPException) as exc:
+        planner.load_community_level(
+            created.public_id, None, user=owner
+        )
     assert exc.value.status_code == 404
 
 
