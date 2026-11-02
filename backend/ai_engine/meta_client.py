@@ -23,7 +23,7 @@ from openai import (
 
 BASE_URL = "https://api.meta.ai/v1"
 DEFAULT_MODEL = "muse-spark-1.3"
-REQUEST_TIMEOUT_SECONDS = 300.0
+REQUEST_TIMEOUT_SECONDS = 3000.0
 # Per-call output budget. Well within the 1M-token context window;
 # worst-case cost ~$0.27 per call at $4.25/M output tokens.
 # Muse Spark is a reasoning model: hidden reasoning tokens share the
