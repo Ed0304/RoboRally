@@ -13,6 +13,16 @@ export interface BfsStep {
   frontier: GridCell[];
   /** Distinct cells discovered so far. */
   visitedCount: number;
+  /** Moves from the start to the current cell (its BFS level). */
+  depth: number;
+  /** Neighbors discovered for the first time by this expansion. */
+  added: GridCell[];
+  /** Neighbors skipped: wall, void, or closed door. */
+  skippedBlocked: number;
+  /** Neighbors skipped: already discovered earlier. */
+  skippedSeen: number;
+  /** True when the expanded cell is the exit. */
+  goal: boolean;
 }
 
 export interface BfsTrace {
@@ -74,6 +84,7 @@ export function traceBfs(maze: MazeDefinition): BfsTrace {
   let head = 0;
   const visited = new Set<string>([startKey]);
   const parent = new Map<string, string>();
+  const depth = new Map<string, number>([[startKey, 0]]);
   const order: GridCell[] = [{ ...maze.start }];
   const steps: BfsStep[] = [];
 
@@ -101,6 +112,11 @@ export function traceBfs(maze: MazeDefinition): BfsTrace {
         current: { ...current },
         frontier: queue.slice(head).map((cell) => ({ ...cell })),
         visitedCount: visited.size,
+        depth: depth.get(currentKey) ?? 0,
+        added: [],
+        skippedBlocked: 0,
+        skippedSeen: 0,
+        goal: true,
       });
 
       return {
@@ -112,27 +128,44 @@ export function traceBfs(maze: MazeDefinition): BfsTrace {
       };
     }
 
+    const added: GridCell[] = [];
+    let skippedBlocked = 0;
+    let skippedSeen = 0;
+
     for (const direction of directions) {
       const x = current.x + direction.x;
       const z = current.z + direction.z;
       const neighborKey = `${x},${z}`;
 
-      if (visited.has(neighborKey)) continue;
+      if (visited.has(neighborKey)) {
+        skippedSeen++;
+        continue;
+      }
 
       const neighbor = tileMap.get(neighborKey);
 
-      if (!neighbor || neighbor.blocksMovement) continue;
+      if (!neighbor || neighbor.blocksMovement) {
+        skippedBlocked++;
+        continue;
+      }
 
       visited.add(neighborKey);
       parent.set(neighborKey, currentKey);
+      depth.set(neighborKey, (depth.get(currentKey) ?? 0) + 1);
       queue.push({ x, z });
       order.push({ x, z });
+      added.push({ x, z });
     }
 
     steps.push({
       current: { ...current },
       frontier: queue.slice(head).map((cell) => ({ ...cell })),
       visitedCount: visited.size,
+      depth: depth.get(currentKey) ?? 0,
+      added,
+      skippedBlocked,
+      skippedSeen,
+      goal: false,
     });
   }
 

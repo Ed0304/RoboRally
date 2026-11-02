@@ -11,7 +11,10 @@ MODEL_API_KEY, and supports constrained structured output via a
 import json
 import logging
 import os
+import re
+import time
 
+from datetime import datetime, timezone
 from openai import (
     APIConnectionError,
     APIError,
@@ -40,15 +43,41 @@ MAX_OUTPUT_TOKENS = 130000
 REASONING_EFFORT = "high"
 # Reduced tier for tiny asks (a move or two) and simplified retries:
 # reasoning burn on a trivial ask must fail fast and cheap instead of
-# eating the full 64k budget (live evidence: 63998/64000 reasoning
-# tokens on a 1-move leg). Visible JSON for a few moves is ~100
-# tokens, so 8k still leaves generous headroom.
+# eating the full output budget (live evidence, at a 64k budget:
+# 63998/64000 reasoning tokens on a 1-move leg). Visible JSON for a
+# few moves is ~100 tokens, so 8k still leaves generous headroom.
 REDUCED_MAX_OUTPUT_TOKENS = 8000
 REDUCED_REASONING_EFFORT = "medium"
 
 # Sanitized diagnostics only: model ids, HTTP statuses, and shapes.
 # Never log API keys, headers, or full prompts here.
 logger = logging.getLogger("roborally.ai_engine")
+
+# Demo ledger: model call start/end events carry purpose, a redacted
+# mission excerpt, outcome, usage, and timing. Full prompts, layouts,
+# keys, headers, and cookies never reach the logs.
+MISSION_LOG_CHARS = 160
+
+_SECRET_PATTERNS = (
+    re.compile(r"LLM\|[A-Za-z0-9._-]+"),
+    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
+    re.compile(r"(MODEL_API_KEY|META_API_KEY)(\s*[:=]\s*)\S+"),
+)
+
+
+def _scrub_secrets(text: str) -> str:
+    """Redact key-like material a user may have pasted into text."""
+    scrubbed = _SECRET_PATTERNS[0].sub("<redacted>", text)
+    scrubbed = _SECRET_PATTERNS[1].sub("<redacted>", scrubbed)
+    return _SECRET_PATTERNS[2].sub(r"\1\2<redacted>", scrubbed)
+
+
+def _one_line(text: str, limit: int = MISSION_LOG_CHARS) -> str:
+    """Single-line truncated excerpt, safe for log lines."""
+    flat = " ".join(str(text).split())
+    if len(flat) > limit:
+        return flat[:limit] + "..."
+    return flat
 
 
 class PlannerError(Exception):
@@ -212,13 +241,16 @@ def complete_plan(
     timeout: float | None = None,
     max_tokens: int | None = None,
     reasoning_effort: str | None = None,
+    purpose: str = "plan",
+    mission: str = "",
 ) -> dict:
     """Request a structured plan from Muse Spark.
 
     Returns the decoded JSON object. Raises PlannerError with a safe
     message for every expected failure mode. ``max_tokens`` and
     ``reasoning_effort`` override the module budgets; None keeps full
-    power for hard legs.
+    power for hard legs. ``purpose`` and ``mission`` feed the call
+    ledger only; the mission is excerpted and scrubbed.
     """
     schema = json_schema if json_schema is not None else PLAN_JSON_SCHEMA
     budget = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
@@ -229,6 +261,27 @@ def complete_plan(
         )
     except MissingCredentialsError:
         raise
+
+    started = time.monotonic()
+    started_at = datetime.now(timezone.utc).isoformat(
+        timespec="milliseconds"
+    )
+
+    def _elapsed_ms() -> int:
+        return int((time.monotonic() - started) * 1000)
+
+    logger.info(
+        "plan request model call start: purpose=%s model=%s "
+        "effort=%s budget=%d mission=%r prompt_chars=%d "
+        "started_at=%s",
+        purpose,
+        model,
+        effort,
+        budget,
+        _one_line(_scrub_secrets(mission)),
+        len(system_prompt) + len(user_prompt),
+        started_at,
+    )
 
     try:
         response = client.chat.completions.create(
@@ -250,9 +303,12 @@ def complete_plan(
         )
     except AuthenticationError as exc:
         logger.warning(
-            "plan request rejected: model=%s stage=auth status=%s",
+            "plan request rejected: model=%s stage=auth status=%s "
+            "purpose=%s duration_ms=%d",
             model,
             getattr(exc, "status_code", "?"),
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning failed: the server's Meta API key was "
@@ -260,32 +316,50 @@ def complete_plan(
             status_code=503,
         ) from None
     except RateLimitError:
-        logger.warning("plan request rate limited: model=%s", model)
+        logger.warning(
+            "plan request rate limited: model=%s "
+            "purpose=%s duration_ms=%d",
+            model,
+            purpose,
+            _elapsed_ms(),
+        )
         raise PlannerError(
             "Mission planning is rate limited. Please try again shortly.",
             status_code=503,
         ) from None
     except APITimeoutError:
         logger.warning(
-            "plan request timed out: model=%s timeout_s=%s",
+            "plan request timed out: model=%s timeout_s=%s "
+            "purpose=%s duration_ms=%d",
             model,
             REQUEST_TIMEOUT_SECONDS,
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning timed out. Please try again.",
             status_code=503,
         ) from None
     except APIConnectionError:
-        logger.warning("plan request connection failed: model=%s", model)
+        logger.warning(
+            "plan request connection failed: model=%s "
+            "purpose=%s duration_ms=%d",
+            model,
+            purpose,
+            _elapsed_ms(),
+        )
         raise PlannerError(
             "Mission planning failed: the model API is unreachable.",
             status_code=503,
         ) from None
     except APIError as exc:
         logger.warning(
-            "plan request API error: model=%s status=%s",
+            "plan request API error: model=%s status=%s "
+            "purpose=%s duration_ms=%d",
             model,
             getattr(exc, "status_code", "?"),
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning failed: the model API returned an error.",
@@ -295,7 +369,13 @@ def complete_plan(
     choices = list(getattr(response, "choices", None) or [])
 
     if not choices:
-        logger.warning("plan request no choices: model=%s", model)
+        logger.warning(
+            "plan request no choices: model=%s "
+            "purpose=%s duration_ms=%d",
+            model,
+            purpose,
+            _elapsed_ms(),
+        )
         raise PlannerError(
             "Mission planning failed: the model returned no "
             "completion. Please try again."
@@ -325,10 +405,13 @@ def complete_plan(
 
     if refusal:
         logger.warning(
-            "plan request refused: model=%s finish=%s refusal=%r",
+            "plan request refused: model=%s finish=%s refusal=%r "
+            "purpose=%s duration_ms=%d",
             model,
             finish_reason,
             str(refusal)[:200],
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning failed: the model declined to plan. "
@@ -338,12 +421,14 @@ def complete_plan(
     if not content.strip():
         logger.warning(
             "plan request empty content: model=%s finish=%s tools=%d "
-            "usage=%s limit=%d",
+            "usage=%s limit=%d purpose=%s duration_ms=%d",
             model,
             finish_reason,
             len(tool_calls),
             usage_summary,
             budget,
+            purpose,
+            _elapsed_ms(),
         )
         if finish_reason == "length":
             detail = (
@@ -364,14 +449,6 @@ def complete_plan(
             )
         raise PlannerError(detail) from None
 
-    logger.info(
-        "plan request ok: model=%s finish=%s chars=%d usage=%s",
-        model,
-        finish_reason,
-        len(content),
-        usage_summary,
-    )
-
     try:
         decoded = json.loads(content)
     except json.JSONDecodeError:
@@ -380,11 +457,13 @@ def complete_plan(
             # truncation, not malformed output. Never parse it.
             logger.warning(
                 "plan request truncated JSON: model=%s chars=%d "
-                "usage=%s limit=%d",
+                "usage=%s limit=%d purpose=%s duration_ms=%d",
                 model,
                 len(content),
                 usage_summary,
                 budget,
+                purpose,
+                _elapsed_ms(),
             )
             raise PlannerError(
                 "Mission planning failed: the plan grew too long to "
@@ -392,10 +471,13 @@ def complete_plan(
                 code="truncated",
             ) from None
         logger.warning(
-            "plan request malformed JSON: model=%s chars=%d head=%r",
+            "plan request malformed JSON: model=%s chars=%d head=%r "
+            "purpose=%s duration_ms=%d",
             model,
             len(content),
             content[:200],
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning failed: the model returned malformed "
@@ -404,13 +486,32 @@ def complete_plan(
 
     if not isinstance(decoded, dict):
         logger.warning(
-            "plan request unexpected shape: model=%s type=%s",
+            "plan request unexpected shape: model=%s type=%s "
+            "purpose=%s duration_ms=%d",
             model,
             type(decoded).__name__,
+            purpose,
+            _elapsed_ms(),
         )
         raise PlannerError(
             "Mission planning failed: the model response had an "
             "unexpected shape."
         ) from None
 
+    action_dirs = ",".join(
+        action.get("direction", "?") if isinstance(action, dict) else "?"
+        for action in decoded.get("actions", [])
+    )
+    logger.info(
+        "plan request ok: purpose=%s model=%s finish=%s "
+        "actions=[%s] understood=%s chars=%d usage=%s duration_ms=%d",
+        purpose,
+        model,
+        finish_reason,
+        action_dirs,
+        decoded.get("understood", "?"),
+        len(content),
+        usage_summary,
+        _elapsed_ms(),
+    )
     return decoded

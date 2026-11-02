@@ -238,6 +238,8 @@ def _request_segment(
         timeout=timeout,
         max_tokens=budget,
         reasoning_effort=effort,
+        purpose=f"leg-{leg}{'-retry' if simplified else ''}",
+        mission=request.mission,
     )
 
     try:

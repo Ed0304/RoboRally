@@ -388,6 +388,42 @@ function LoadedMazeScene({
     replay.phase === "routing" &&
     replay.routeHead >= replay.path.length - 1;
 
+  // Thinking narration synced to the replay heads: the live expansion
+  // during "exploring", the frozen goal event plus summary while the
+  // ghost marker walks the route.
+  const replayThinking = useMemo(() => {
+    if (!replay) return null;
+    const result = replayOptions?.find(
+      (entry) => entry.strategy === replay.strategy
+    )?.result;
+    const trace = result?.trace;
+    if (!result || !trace || trace.length === 0) return null;
+    const total = trace.length;
+    const summary = {
+      reached: result.reached,
+      moves: result.moves,
+      expanded: result.expanded,
+      cost: result.cost,
+    };
+    if (replay.phase === "exploring") {
+      const head = Math.min(replay.exploredHead, total - 1);
+      return {
+        strategy: replay.strategy,
+        event: trace[head] ?? null,
+        step: head + 1,
+        total,
+        summary,
+      };
+    }
+    return {
+      strategy: replay.strategy,
+      event: trace[total - 1] ?? null,
+      step: total,
+      total,
+      summary,
+    };
+  }, [replay, replayOptions]);
+
   function startReplay(strategy: SearchStrategy) {
     const found = replayOptions?.find(
       (entry) => entry.strategy === strategy
@@ -1144,6 +1180,7 @@ function LoadedMazeScene({
             active={replay?.strategy ?? null}
             finished={replayFinished}
             exploring={replayExploring}
+            thinking={replayThinking}
             onSelect={startReplay}
             onClose={stopReplay}
           />

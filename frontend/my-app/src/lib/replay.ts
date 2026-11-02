@@ -33,6 +33,7 @@ export function replayRoutes(
   return compareStrategies(maze, maze.start, maze.exit, {
     ...previewOptionsFor(maze),
     costs,
+    trace: true,
   });
 }
 

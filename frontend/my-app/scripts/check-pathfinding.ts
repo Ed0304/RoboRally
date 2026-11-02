@@ -229,6 +229,99 @@ console.log("Door-gated maze: trigger before door");
   check("closed-door search cannot reach the exit", !naive.reached);
 }
 
+// --- Thinking traces: narration events mirror the search exactly ---
+console.log("Trace integrity: narration data matches execution");
+{
+  const maze = levelLayout(1);
+  const options = previewOptionsFor(maze);
+
+  const untraced = planRoute(maze, maze.start, maze.exit, options);
+  check("trace is opt-in (absent by default)", untraced.trace === undefined);
+
+  const traced = planRoute(maze, maze.start, maze.exit, {
+    ...options,
+    trace: true,
+  });
+  check(
+    "tracing changes no route",
+    JSON.stringify(traced.path) === JSON.stringify(untraced.path)
+  );
+  check(
+    "tracing changes no expansion order",
+    JSON.stringify(traced.order) === JSON.stringify(untraced.order)
+  );
+
+  const events = traced.trace;
+  check("trace present when requested", events !== undefined);
+
+  if (events) {
+    check(
+      "one event per expansion",
+      events.length === traced.order.length,
+      `events=${events.length} order=${traced.order.length}`
+    );
+    check(
+      "events align with the animated order",
+      events.every(
+        (event, index) =>
+          event.node.x === traced.order[index].x &&
+          event.node.z === traced.order[index].z
+      )
+    );
+    check(
+      "every neighbor classified exactly once per expansion",
+      events.every(
+        (event) =>
+          event.goal ||
+          event.added.length +
+            event.updated.length +
+            event.skippedBlocked +
+            event.skippedSeen ===
+            4
+      )
+    );
+    check(
+      "first expansion starts at cost 0",
+      events.length > 0 && events[0].g === 0 && events[0].f === 0
+    );
+    const last = events[events.length - 1];
+    check(
+      "goal pop closes the trace",
+      events.length > 0 && last.goal && last.g === traced.moves,
+      `g=${events.length > 0 ? last.g : "?"} moves=${traced.moves}`
+    );
+  }
+}
+
+// --- Weighted pop rules: priority never moves backwards ---
+console.log("Trace pop rules: Dijkstra/A* honor their priority");
+{
+  const maze = levelLayout(3);
+  const costs = costsForMaze(maze);
+  const options = { ...previewOptionsFor(maze), costs };
+
+  for (const strategy of ["dijkstra", "astar"] as const) {
+    const result = planRoute(maze, maze.start, maze.exit, {
+      ...options,
+      strategy,
+      trace: true,
+    });
+    const events = result.trace ?? [];
+    check(
+      `${strategy} pops never go back in priority`,
+      events.every(
+        (event, index) => index === 0 || event.f >= events[index - 1].f
+      )
+    );
+    check(
+      `${strategy} goal cost equals the route cost`,
+      events.length > 0 &&
+        events[events.length - 1].goal &&
+        events[events.length - 1].g === result.cost
+    );
+  }
+}
+
 if (failures > 0) {
   throw new Error(`${failures} pathfinding check(s) failed.`);
 }

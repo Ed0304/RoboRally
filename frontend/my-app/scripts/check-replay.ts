@@ -110,6 +110,17 @@ for (const level of levels) {
       bench.cost,
       `L${level.id} ${comparison.strategy} cost matches`
     );
+
+    const trace = comparison.result.trace;
+    assert.ok(
+      trace,
+      `L${level.id} ${comparison.strategy} records a narration trace`
+    );
+    assert.equal(
+      trace.length,
+      comparison.result.order.length,
+      `L${level.id} ${comparison.strategy} narrates every expansion`
+    );
   }
 
   // Deterministic: same inputs, same animated path.
@@ -262,6 +273,33 @@ assert.match(
   replayPanel,
   /Visualization only/,
   "panel states the robot and battery are untouched"
+);
+
+// --- Thinking narration: synced to the replay heads, HUD-styled ---
+assert.match(
+  replayLib,
+  /trace: true/,
+  "replay routes record narration traces"
+);
+assert.match(
+  replayPanel,
+  /ThinkingPanel/,
+  "replay panel renders the thinking narration"
+);
+assert.match(
+  replayPanel,
+  /tone="hud"/,
+  "replay narration uses HUD styling"
+);
+assert.match(
+  mazeScene,
+  /replayThinking/,
+  "scene syncs narration to the replay heads"
+);
+assert.match(
+  mazeScene,
+  /thinking=\{replayThinking\}/,
+  "narration state reaches the panel"
 );
 
 console.log("Replay checks passed!");

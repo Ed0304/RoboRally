@@ -10,6 +10,7 @@ import {
 } from "@/lib/pathfinding";
 import { cellKey } from "@/lib/bfs";
 import MazeGrid from "./MazeGrid";
+import ThinkingPanel from "./ThinkingPanel";
 
 const AUTOPLAY_MS = 150;
 
@@ -39,6 +40,7 @@ export default function CostLab({
         ...previewOptionsFor(maze),
         strategy,
         costs,
+        trace: true,
       }),
     [maze, strategy, costs]
   );
@@ -147,17 +149,19 @@ export default function CostLab({
           Show final route overlay
         </label>
 
-        {result.reached ? (
-          <p className="text-sm leading-6 text-muted">
-            {TITLES[strategy]} finds a {result.moves}-move route costing{" "}
-            {result.cost}% battery after expanding {result.expanded}{" "}
-            states.
-          </p>
-        ) : (
-          <p className="text-sm leading-6 text-muted">
-            No route: {result.reason}
-          </p>
-        )}
+        <ThinkingPanel
+          strategy={strategy}
+          event={step > 0 ? (result.trace?.[step - 1] ?? null) : null}
+          step={step}
+          total={totalSteps}
+          summary={{
+            reached: result.reached,
+            moves: result.moves,
+            expanded: result.expanded,
+            cost: result.cost,
+            reason: result.reason,
+          }}
+        />
 
         {hasWeighted && (
           <p className="text-xs leading-5 text-muted">

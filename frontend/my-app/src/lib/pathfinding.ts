@@ -27,6 +27,40 @@ export interface RouteOptions {
   costs?: CostModel;
   /** Door state at the search start. Defaults to false. */
   initialDoorOpen?: boolean;
+  /**
+   * Record one SearchTraceEvent per expansion, aligned 1:1 with `order`,
+   * for beginner-friendly "thinking" narration. Off by default so hot
+   * paths (cost fields, benchmarks) stay allocation-free.
+   */
+  trace?: boolean;
+}
+
+/**
+ * One expansion narrated for beginners: the popped node, the values the
+ * pop rule actually used, and what happened to each neighbor. Recorded
+ * only when RouteOptions.trace is true; events line up with `order`.
+ */
+export interface SearchTraceEvent {
+  /** The state just removed from the frontier for processing. */
+  node: RouteCell;
+  /** BFS: moves from the start. Dijkstra/A*: battery cost so far. */
+  g: number;
+  /** A*: Manhattan estimate of the remaining distance. Else 0. */
+  h: number;
+  /** Priority actually used to pop: g for BFS/Dijkstra, g + h for A*. */
+  f: number;
+  /** Frontier entries still waiting after this expansion's pushes. */
+  frontierSize: number;
+  /** Neighbors discovered for the first time by this expansion. */
+  added: RouteCell[];
+  /** Neighbors re-prioritized with a better cost (weighted only). */
+  updated: RouteCell[];
+  /** Neighbors skipped: wall, void, or avoided laser. */
+  skippedBlocked: number;
+  /** Neighbors skipped: already settled or no better than known. */
+  skippedSeen: number;
+  /** True when the popped node is the goal. */
+  goal: boolean;
 }
 
 export interface RouteResult {
@@ -48,12 +82,23 @@ export interface RouteResult {
   order: RouteCell[];
   /** Number of expanded states; always order.length. */
   expanded: number;
+  /**
+   * Per-expansion narration events, aligned 1:1 with `order`. Present
+   * only when RouteOptions.trace is true; otherwise undefined.
+   */
+  trace?: SearchTraceEvent[];
 }
 
 export const DEFAULT_ROUTE_OPTIONS: RouteOptions = {
   avoidLasers: false,
   dynamicDoors: false,
 };
+
+/**
+ * Shared empty neighbor list for untraced runs, so the hot path allocates
+ * nothing extra. Never mutated: trace pushes are always wantTrace-guarded.
+ */
+const NO_TRACE_CELLS: RouteCell[] = [];
 
 /**
  * Deterministic route planner for previews. Mirrors the engine's movement
@@ -82,6 +127,8 @@ export function planRoute(
 
   const goalKey = `${goal.x},${goal.z}`;
   const order: RouteCell[] = [];
+  const wantTrace = options.trace === true;
+  const events: SearchTraceEvent[] = [];
   const failure = (reason: string): RouteResult => ({
     reached: false,
     path: [],
@@ -90,6 +137,7 @@ export function planRoute(
     cost: 0,
     order,
     expanded: order.length,
+    trace: wantTrace ? events : undefined,
   });
 
   function blocked(x: number, z: number, doorOpen: boolean): boolean {
@@ -182,6 +230,24 @@ export function planRoute(
 
       path.reverse();
 
+      if (wantTrace) {
+        const g = best.get(currentKey) ?? 0;
+        const h =
+          strategy === "astar" ? heuristic(current.x, current.z) : 0;
+        events.push({
+          node: { x: current.x, z: current.z },
+          g,
+          h,
+          f: g + h,
+          frontierSize: frontier.length,
+          added: [],
+          updated: [],
+          skippedBlocked: 0,
+          skippedSeen: 0,
+          goal: true,
+        });
+      }
+
       return {
         reached: true,
         path,
@@ -190,10 +256,15 @@ export function planRoute(
         cost: routeCost(path, costs),
         order,
         expanded: order.length,
+        trace: wantTrace ? events : undefined,
       };
     }
 
     const currentCost = best.get(currentKey) ?? 0;
+    const added: RouteCell[] = wantTrace ? [] : NO_TRACE_CELLS;
+    const updated: RouteCell[] = wantTrace ? [] : NO_TRACE_CELLS;
+    let skippedBlocked = 0;
+    let skippedSeen = 0;
 
     for (const direction of directions) {
       const x = current.x + direction.x;
@@ -203,22 +274,34 @@ export function planRoute(
         (current.doorOpen || isTrigger(x, z));
       const key = stateKey(x, z, doorOpen);
 
-      if (blocked(x, z, current.doorOpen)) continue;
+      if (blocked(x, z, current.doorOpen)) {
+        if (wantTrace) skippedBlocked++;
+        continue;
+      }
 
       if (strategy === "bfs") {
-        if (nodeByKey.has(key)) continue;
+        if (nodeByKey.has(key)) {
+          if (wantTrace) skippedSeen++;
+          continue;
+        }
         parent.set(key, currentKey);
         nodeByKey.set(key, { x, z, doorOpen });
         best.set(key, currentCost + 1);
         queued.add(key);
         frontier.push(key);
+        if (wantTrace) added.push({ x, z });
         continue;
       }
 
       const stepCost = moveCost(costs, x, z);
       const nextCost = currentCost + stepCost;
-      if (nextCost >= (best.get(key) ?? Infinity)) continue;
+      const known = best.get(key);
+      if (nextCost >= (known ?? Infinity)) {
+        if (wantTrace) skippedSeen++;
+        continue;
+      }
 
+      const firstSeen = known === undefined;
       parent.set(key, currentKey);
       nodeByKey.set(key, { x, z, doorOpen });
       best.set(key, nextCost);
@@ -226,6 +309,24 @@ export function planRoute(
         queued.add(key);
         frontier.push(key);
       }
+      if (wantTrace) (firstSeen ? added : updated).push({ x, z });
+    }
+
+    if (wantTrace) {
+      const h =
+        strategy === "astar" ? heuristic(current.x, current.z) : 0;
+      events.push({
+        node: { x: current.x, z: current.z },
+        g: currentCost,
+        h,
+        f: currentCost + h,
+        frontierSize: frontier.length,
+        added,
+        updated,
+        skippedBlocked,
+        skippedSeen,
+        goal: false,
+      });
     }
   }
 

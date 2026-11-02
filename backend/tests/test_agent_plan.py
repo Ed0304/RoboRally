@@ -744,6 +744,133 @@ def test_usage_summary_reports_reasoning_split():
     assert meta_client._summarize_usage(None) == "?"
 
 
+def _script_model_client(monkeypatch, content, finish_reason="stop",
+                         usage=None):
+    """Stub get_client with a scripted chat.completions response."""
+    from types import SimpleNamespace
+
+    message = SimpleNamespace(
+        content=content, refusal=None, tool_calls=None
+    )
+    choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+    response = SimpleNamespace(choices=[choice], usage=usage)
+    fake = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **kwargs: response
+            )
+        )
+    )
+    monkeypatch.setattr(meta_client, "get_client", lambda timeout: fake)
+
+
+def test_model_call_logs_start_end_ledger(monkeypatch, caplog):
+    import logging
+    from types import SimpleNamespace
+
+    usage = SimpleNamespace(
+        prompt_tokens=645, completion_tokens=12, total_tokens=657,
+        completion_tokens_details=None,
+    )
+    _script_model_client(
+        monkeypatch,
+        '{"actions": [{"op": "move", "direction": "east"}], '
+        '"understood": true}',
+        usage=usage,
+    )
+    with caplog.at_level(logging.INFO):
+        decoded = meta_client.complete_plan(
+            "system prompt",
+            "Mission: go east\nLayout:\nS3CR3T-LAYOUT-MARKER",
+            purpose="leg-2",
+            mission="go east",
+        )
+
+    assert decoded["understood"] is True
+    assert "plan request model call start" in caplog.text
+    assert "purpose=leg-2" in caplog.text
+    assert "muse-spark-1.3" in caplog.text
+    assert "go east" in caplog.text
+    assert "plan request ok" in caplog.text
+    assert "actions=[east]" in caplog.text
+    assert "understood=True" in caplog.text
+    assert "duration_ms=" in caplog.text
+    assert "S3CR3T-LAYOUT-MARKER" not in caplog.text
+
+
+def test_model_call_logs_failure_with_duration(monkeypatch, caplog):
+    import logging
+
+    _script_model_client(monkeypatch, "", finish_reason="length")
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(PlannerError) as exc:
+            meta_client.complete_plan(
+                "system", "Mission: x", purpose="leg-1"
+            )
+
+    assert exc.value.code == "truncated"
+    assert "purpose=leg-1" in caplog.text
+    assert "duration_ms=" in caplog.text
+
+
+def test_model_call_scrubs_key_like_text(monkeypatch, caplog):
+    import logging
+
+    _script_model_client(
+        monkeypatch,
+        '{"actions": [{"op": "move", "direction": "north"}], '
+        '"understood": true}',
+    )
+    with caplog.at_level(logging.INFO):
+        meta_client.complete_plan(
+            "system",
+            "Mission: x",
+            mission="my key LLM|abc123def456 please",
+        )
+
+    assert "LLM|abc123def456" not in caplog.text
+    assert "<redacted>" in caplog.text
+
+
+def test_plan_passes_purpose_and_mission(stub_level, monkeypatch):
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(kwargs)
+        return {
+            "actions": [
+                {"op": "move", "direction": "east"},
+                {"op": "move", "direction": "east"},
+            ],
+            "understood": True,
+        }
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+    planner.plan_mission(make_request())  # "Reach the exit."
+
+    assert calls[0]["purpose"] == "leg-1"
+    assert calls[0]["mission"] == "Reach the exit."
+
+
+def test_plan_retry_purpose_marks_retry(stub_level, monkeypatch):
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise PlannerError("grew too long", code="truncated")
+        return {
+            "actions": [{"op": "move", "direction": "east"}],
+            "understood": True,
+        }
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+    response = planner.plan_mission(make_request(mission="Move east"))
+
+    assert [a.direction for a in response.actions] == ["east"]
+    assert [call["purpose"] for call in calls] == ["leg-1", "leg-1-retry"]
+
+
 def test_plan_logs_leg_diagnostics(stub_level, monkeypatch, caplog):
     import logging
 

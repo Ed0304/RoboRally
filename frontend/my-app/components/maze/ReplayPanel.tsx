@@ -4,14 +4,26 @@
 import { STRATEGY_LABEL } from "@/lib/replay";
 import type {
   SearchStrategy,
+  SearchTraceEvent,
   StrategyComparison,
 } from "@/lib/pathfinding";
+import type { SummaryInput } from "@/lib/explainSearch";
+import ThinkingPanel from "../learn/ThinkingPanel";
+
+export interface ReplayThinking {
+  strategy: SearchStrategy;
+  event: SearchTraceEvent | null;
+  step: number;
+  total: number;
+  summary: SummaryInput;
+}
 
 interface ReplayPanelProps {
   routes: StrategyComparison[];
   active: SearchStrategy | null;
   finished: boolean;
   exploring: boolean;
+  thinking: ReplayThinking | null;
   onSelect: (strategy: SearchStrategy) => void;
   onClose: () => void;
 }
@@ -21,6 +33,7 @@ export default function ReplayPanel({
   active,
   finished,
   exploring,
+  thinking,
   onSelect,
   onClose,
 }: ReplayPanelProps) {
@@ -136,6 +149,18 @@ export default function ReplayPanel({
                 ? "finished."
                 : "playing — follow the amber marker."}
           </p>
+          {thinking !== null && (
+            <div className="mt-2">
+              <ThinkingPanel
+                strategy={thinking.strategy}
+                event={thinking.event}
+                step={thinking.step}
+                total={thinking.total}
+                summary={thinking.summary}
+                tone="hud"
+              />
+            </div>
+          )}
           <button
             type="button"
             onClick={onClose}

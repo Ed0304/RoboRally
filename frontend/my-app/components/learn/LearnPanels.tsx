@@ -11,12 +11,14 @@ import {
   traceBfs,
   type BfsTrace,
 } from "@/lib/bfs";
+import { bfsStepToEvent } from "@/lib/explainSearch";
 import {
   planRoute,
   previewOptionsFor,
   type SearchStrategy,
 } from "@/lib/pathfinding";
 import MazeGrid from "./MazeGrid";
+import ThinkingPanel from "./ThinkingPanel";
 
 const AUTOPLAY_MS = 150;
 
@@ -91,6 +93,9 @@ export function LessonSection({ lab }: { lab: LabMaze }) {
     showPath && trace.reachedExit
       ? new Set(trace.path.map(cellKey))
       : undefined;
+
+  const thinkingEvent =
+    step > 0 ? (trace.steps[step - 1] ?? null) : null;
 
   function reset() {
     setPlaying(false);
@@ -189,6 +194,18 @@ export function LessonSection({ lab }: { lab: LabMaze }) {
             {trace.visitedCount} cells to prove a{" "}
             {shortestPathLength(trace)}-move route is shortest.
           </p>
+
+          <ThinkingPanel
+            strategy="bfs"
+            event={thinkingEvent ? bfsStepToEvent(thinkingEvent) : null}
+            step={step}
+            total={totalSteps}
+            summary={{
+              reached: trace.reachedExit,
+              moves: Math.max(trace.path.length - 1, 0),
+              expanded: totalSteps,
+            }}
+          />
         </div>
       </div>
     </section>

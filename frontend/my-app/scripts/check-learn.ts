@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { levels } from "../data/levels";
 import { buildMaze } from "@/lib/maze";
 import { validateMaze } from "@/lib/mazevalidation";
@@ -15,6 +18,12 @@ import {
   traceBfs,
 } from "@/lib/bfs";
 import { BFS_LAB, LAB_MAZES } from "@/lib/labMazes";
+import {
+  STRATEGY_INTRO,
+  bfsStepToEvent,
+  describeStep,
+  describeSummary,
+} from "@/lib/explainSearch";
 
 function route(
   id: 101 | 102 | 103 | 104,
@@ -198,6 +207,223 @@ function route(
   assert.ok(
     dijkstra.expanded > astar.expanded * 2,
     "Dijkstra explores more than twice the states A* does"
+  );
+}
+
+// --- Thinking narration: every animation explains the real execution ---
+{
+  // Required beginner wordings, one pop rule per strategy.
+  assert.match(STRATEGY_INTRO.bfs.rule, /level by level/);
+  assert.match(STRATEGY_INTRO.dijkstra.rule, /lowest known/);
+  assert.match(STRATEGY_INTRO.astar.rule, /f\(n\) = g\(n\) \+ h\(n\)/);
+
+  // BFS lesson: adapted steps carry the real depths and neighbor counts.
+  const bfsMaze = buildMaze(BFS_LAB);
+  const bfsTrace = traceBfs(bfsMaze);
+  const bfsEvents = bfsTrace.steps.map(bfsStepToEvent);
+  assert.equal(bfsEvents.length, bfsTrace.steps.length);
+
+  for (const event of bfsEvents) {
+    if (event.goal) continue;
+    assert.equal(
+      event.added.length + event.skippedBlocked + event.skippedSeen,
+      4,
+      "every BFS neighbor is classified exactly once"
+    );
+  }
+
+  const bfsFirst = bfsEvents[0];
+  assert.deepEqual(bfsFirst.node, { x: 1, z: 1 });
+  assert.equal(bfsFirst.g, 0);
+  assert.equal(bfsFirst.f, 0);
+
+  const bfsGoal = bfsEvents[bfsEvents.length - 1];
+  assert.equal(bfsGoal.goal, true);
+  assert.equal(bfsGoal.g, 7, "goal depth equals the 7-move optimum");
+
+  // Narration repeats recorded numbers; nothing is invented.
+  const bfsSecond = describeStep("bfs", bfsEvents[1]);
+  assert.match(bfsSecond.headline, /1 move from the start/);
+  assert.deepEqual(bfsSecond.stats, [
+    { label: "Distance from start", value: "1 move" },
+  ]);
+  assert.match(bfsSecond.detail, /waiting/);
+  assert.equal(
+    describeStep("bfs", bfsGoal).headline,
+    "Exit reached!"
+  );
+  assert.match(
+    describeSummary("bfs", {
+      reached: true,
+      moves: 7,
+      expanded: bfsEvents.length,
+    }),
+    /7 moves/
+  );
+
+  // Weighted labs: traces align with the animated expansion order and
+  // honor each strategy's pop rule on the real lab-102 fork.
+  const fork = LAB_MAZES.find((entry) => entry.id === 102);
+  assert.ok(fork);
+  const forkMaze = buildMaze(fork);
+  const forkCosts = costsForMaze(forkMaze);
+
+  for (const strategy of ["bfs", "dijkstra", "astar"] as const) {
+    const untraced = planRoute(forkMaze, forkMaze.start, forkMaze.exit, {
+      ...previewOptionsFor(forkMaze),
+      strategy,
+      costs: forkCosts,
+    });
+    assert.equal(
+      untraced.trace,
+      undefined,
+      `${strategy} stays allocation-free without the trace flag`
+    );
+
+    const result = planRoute(forkMaze, forkMaze.start, forkMaze.exit, {
+      ...previewOptionsFor(forkMaze),
+      strategy,
+      costs: forkCosts,
+      trace: true,
+    });
+    const events = result.trace;
+    assert.ok(events, `${strategy} records a narration trace`);
+    assert.equal(events.length, result.order.length);
+
+    for (const [index, event] of events.entries()) {
+      assert.deepEqual(
+        event.node,
+        result.order[index],
+        `${strategy} event ${index} matches the animated order`
+      );
+      if (!event.goal) {
+        assert.equal(
+          event.added.length +
+            event.updated.length +
+            event.skippedBlocked +
+            event.skippedSeen,
+          4,
+          `${strategy} classifies all four neighbors per expansion`
+        );
+      }
+      if (strategy === "astar") {
+        assert.equal(
+          event.f,
+          event.g + event.h,
+          "A* pops by exactly g + h"
+        );
+      }
+      if (index > 0) {
+        assert.ok(
+          event.f >= events[index - 1].f,
+          `${strategy} pop priority never moves backwards`
+        );
+      }
+    }
+
+    const goal = events[events.length - 1];
+    assert.equal(goal.goal, true);
+    if (strategy === "bfs") {
+      assert.equal(goal.g, result.moves);
+    } else {
+      assert.equal(goal.g, result.cost);
+    }
+  }
+
+  // Weighted narration shows the real priority values.
+  const dijkstraTrace = planRoute(
+    forkMaze,
+    forkMaze.start,
+    forkMaze.exit,
+    {
+      ...previewOptionsFor(forkMaze),
+      strategy: "dijkstra",
+      costs: forkCosts,
+      trace: true,
+    }
+  ).trace;
+  assert.ok(dijkstraTrace);
+  const dijkstraFirst = describeStep("dijkstra", dijkstraTrace[0]);
+  assert.match(dijkstraFirst.headline, /cheapest waiting cell/);
+  assert.deepEqual(dijkstraFirst.stats, [
+    { label: "Cost so far", value: "0% battery" },
+  ]);
+  assert.match(
+    describeSummary("dijkstra", {
+      reached: true,
+      moves: 9,
+      expanded: dijkstraTrace.length,
+      cost: 9,
+    }),
+    /9 moves.*≈9% battery/
+  );
+
+  const astarTrace = planRoute(forkMaze, forkMaze.start, forkMaze.exit, {
+    ...previewOptionsFor(forkMaze),
+    strategy: "astar",
+    costs: forkCosts,
+    trace: true,
+  }).trace;
+  assert.ok(astarTrace);
+  const astarLive = astarTrace.find((event) => !event.goal);
+  assert.ok(astarLive);
+  const astarNarration = describeStep("astar", astarLive);
+  assert.deepEqual(astarNarration.stats[2], {
+    label: "f(n) · total",
+    value: `${astarLive.f}`,
+  });
+}
+
+// --- Thinking panel wiring: every animation surface renders it ---
+{
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+  const learnPanels = readFileSync(
+    join(root, "components/learn/LearnPanels.tsx"),
+    "utf8"
+  );
+  const costLab = readFileSync(
+    join(root, "components/learn/CostLab.tsx"),
+    "utf8"
+  );
+  const thinkingPanel = readFileSync(
+    join(root, "components/learn/ThinkingPanel.tsx"),
+    "utf8"
+  );
+
+  assert.match(
+    learnPanels,
+    /bfsStepToEvent/,
+    "BFS lesson adapts real trace steps, never invented ones"
+  );
+  assert.match(
+    learnPanels,
+    /<ThinkingPanel/,
+    "BFS lesson renders the thinking panel"
+  );
+  assert.match(
+    costLab,
+    /trace: true/,
+    "Dijkstra/A* lab records narration traces"
+  );
+  assert.match(
+    costLab,
+    /<ThinkingPanel/,
+    "Dijkstra/A* lab renders the thinking panel"
+  );
+  assert.match(
+    thinkingPanel,
+    /aria-live/,
+    "thinking panel announces step changes"
+  );
+  assert.match(
+    thinkingPanel,
+    /describeStep/,
+    "panel narrates from recorded events"
+  );
+  assert.match(
+    thinkingPanel,
+    /describeSummary/,
+    "panel summarizes the real outcome"
   );
 }
 
