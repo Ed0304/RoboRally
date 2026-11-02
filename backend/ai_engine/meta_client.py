@@ -38,6 +38,13 @@ MAX_OUTPUT_TOKENS = 64000
 # (default), "high" (slow, expensive, more accurate).
 # Ref: https://dev.meta.ai/docs/structured-output#reasoning-effort
 REASONING_EFFORT = "high"
+# Reduced tier for tiny asks (a move or two) and simplified retries:
+# reasoning burn on a trivial ask must fail fast and cheap instead of
+# eating the full 64k budget (live evidence: 63998/64000 reasoning
+# tokens on a 1-move leg). Visible JSON for a few moves is ~100
+# tokens, so 8k still leaves generous headroom.
+REDUCED_MAX_OUTPUT_TOKENS = 8000
+REDUCED_REASONING_EFFORT = "medium"
 
 # Sanitized diagnostics only: model ids, HTTP statuses, and shapes.
 # Never log API keys, headers, or full prompts here.
@@ -203,13 +210,19 @@ def complete_plan(
     model: str = DEFAULT_MODEL,
     json_schema: dict | None = None,
     timeout: float | None = None,
+    max_tokens: int | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Request a structured plan from Muse Spark.
 
     Returns the decoded JSON object. Raises PlannerError with a safe
-    message for every expected failure mode.
+    message for every expected failure mode. ``max_tokens`` and
+    ``reasoning_effort`` override the module budgets; None keeps full
+    power for hard legs.
     """
     schema = json_schema if json_schema is not None else PLAN_JSON_SCHEMA
+    budget = MAX_OUTPUT_TOKENS if max_tokens is None else max_tokens
+    effort = REASONING_EFFORT if reasoning_effort is None else reasoning_effort
     try:
         client = get_client(
             REQUEST_TIMEOUT_SECONDS if timeout is None else timeout
@@ -232,8 +245,8 @@ def complete_plan(
                 },
             },
             temperature=0.2,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            reasoning_effort=REASONING_EFFORT,
+            max_tokens=budget,
+            reasoning_effort=effort,
         )
     except AuthenticationError as exc:
         logger.warning(
@@ -330,7 +343,7 @@ def complete_plan(
             finish_reason,
             len(tool_calls),
             usage_summary,
-            MAX_OUTPUT_TOKENS,
+            budget,
         )
         if finish_reason == "length":
             detail = (
@@ -371,7 +384,7 @@ def complete_plan(
                 model,
                 len(content),
                 usage_summary,
-                MAX_OUTPUT_TOKENS,
+                budget,
             )
             raise PlannerError(
                 "Mission planning failed: the plan grew too long to "

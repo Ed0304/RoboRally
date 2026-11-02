@@ -44,6 +44,21 @@ PLANNING_TIMEOUT_SECONDS = 600.0
 # moves and an explicit follow-the-mission instruction, which gives the
 # reasoning model a cheaper task instead of the same failing one.
 RETRY_ACTIONS = 6
+# Asks at or below this size use the reduced model tier: a move or two
+# needs little reasoning, so a burn fails fast and cheap instead of
+# eating the full budget (and hanging the serving chain long enough
+# to surface as a proxy-side 500).
+SMALL_LEG_ACTIONS = 2
+
+
+def _leg_budgets(max_actions: int, simplified: bool) -> tuple[int, str]:
+    """(max_tokens, reasoning_effort) for one segment call."""
+    if simplified or max_actions <= SMALL_LEG_ACTIONS:
+        return (
+            meta_client.REDUCED_MAX_OUTPUT_TOKENS,
+            meta_client.REDUCED_REASONING_EFFORT,
+        )
+    return meta_client.MAX_OUTPUT_TOKENS, meta_client.REASONING_EFFORT
 
 SYSTEM_PROMPT = """You command a robot in a grid factory maze. Plan the next leg of the mission as a short move plan.
 
@@ -191,6 +206,7 @@ def _request_segment(
     exit_objective: bool = True,
     requested: str = "",
 ) -> ActionSegment:
+    budget, effort = _leg_budgets(max_actions, simplified)
     logger.info(
         "plan request leg: level=%d leg=%d pos=(%d, %d) "
         "schema=segment%d effort=%s limit=%d",
@@ -199,8 +215,8 @@ def _request_segment(
         position["x"],
         position["z"],
         max_actions,
-        meta_client.REASONING_EFFORT,
-        meta_client.MAX_OUTPUT_TOKENS,
+        effort,
+        budget,
     )
 
     raw = meta_client.complete_plan(
@@ -220,6 +236,8 @@ def _request_segment(
         model=meta_client.DEFAULT_MODEL,
         json_schema=meta_client.segment_schema(max_actions),
         timeout=timeout,
+        max_tokens=budget,
+        reasoning_effort=effort,
     )
 
     try:

@@ -99,7 +99,8 @@ _UNIT = r"(?:steps?|tiles?|moves?|spaces?|squares?)?"
 _DIRS = r"(north|south|east|west|up|down|left|right)"
 DIR_FIRST_PATTERN = re.compile(rf"\b{_DIRS}\s+{_COUNT}\s*{_UNIT}")
 COUNT_FIRST_PATTERN = re.compile(
-    rf"\b{_COUNT}\s*(?:steps?|tiles?|moves?|spaces?|squares?)?\s+{_DIRS}\b"
+    rf"\b{_COUNT}\s*(?:steps?|tiles?|moves?|spaces?|squares?)?\s+"
+    rf"(?:to\s+the\s+|to\s+|the\s+)?{_DIRS}\b"
 )
 BARE_DIR_PATTERN = re.compile(rf"\b{_DIRS}\b")
 OF_GUARD = re.compile(r"\s+of\b")

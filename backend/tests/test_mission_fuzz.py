@@ -334,6 +334,39 @@ def _reason_for(text: str) -> str:
 # --- Focused validation unit tests ---
 
 
+def test_count_with_to_the_keeps_count():
+    verdict = validate_mission_text("Move 4 steps to the east")
+    assert verdict.valid
+    assert verdict.required_sequence == ("east",) * 4
+    assert not verdict.exit_objective
+
+
+def test_count_to_direction_without_unit():
+    verdict = validate_mission_text("move 3 to the north")
+    assert verdict.valid
+    assert verdict.required_sequence == ("north",) * 3
+
+
+def test_count_direction_adjacent_unchanged():
+    verdict = validate_mission_text("Move 4 steps east")
+    assert verdict.valid
+    assert verdict.required_sequence == ("east",) * 4
+
+
+def test_to_the_exit_is_no_sequence():
+    verdict = validate_mission_text("go to the exit")
+    assert verdict.valid
+    assert verdict.exit_objective
+    assert verdict.required_sequence == ()
+
+
+def test_positional_of_phrase_stays_excluded():
+    verdict = validate_mission_text("south of the exit")
+    assert verdict.valid
+    assert verdict.exit_objective
+    assert verdict.required_sequence == ()
+
+
 def test_single_words_rejected_as_too_short():
     for word in ["Go", "Move", "Run", "Exit", "Help", "North", "Continue"]:
         verdict = validate_mission_text(word)

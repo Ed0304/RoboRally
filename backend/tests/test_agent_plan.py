@@ -271,6 +271,72 @@ def test_plan_happy_path(stub_level, monkeypatch):
     )
 
 
+def test_small_ask_uses_reduced_budget(stub_level, monkeypatch):
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(kwargs)
+        return {
+            "actions": [{"op": "move", "direction": "east"}],
+            "understood": True,
+        }
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+    response = planner.plan_mission(make_request(mission="Move east"))
+
+    assert [a.direction for a in response.actions] == ["east"]
+    assert len(calls) == 1
+    assert calls[0]["max_tokens"] == meta_client.REDUCED_MAX_OUTPUT_TOKENS
+    assert calls[0]["reasoning_effort"] == meta_client.REDUCED_REASONING_EFFORT
+
+
+def test_full_ask_keeps_full_budget(stub_level, monkeypatch):
+    calls = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        calls.append(kwargs)
+        return {
+            "actions": [
+                {"op": "move", "direction": "east"},
+                {"op": "move", "direction": "east"},
+            ],
+            "understood": True,
+        }
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+    planner.plan_mission(make_request())  # "Reach the exit."
+
+    assert len(calls) == 1
+    assert calls[0]["max_tokens"] == meta_client.MAX_OUTPUT_TOKENS
+    assert calls[0]["reasoning_effort"] == meta_client.REASONING_EFFORT
+
+
+def test_simplified_retry_uses_reduced_budget(stub_level, monkeypatch):
+    attempts = []
+    retries = []
+
+    def scripted(system, user, model, json_schema=None, **kwargs):
+        attempts.append(kwargs)
+        if len(attempts) == 1:
+            raise PlannerError("grew too long", code="truncated")
+        retries.append(kwargs)
+        return {
+            "actions": [
+                {"op": "move", "direction": "east"},
+                {"op": "move", "direction": "east"},
+            ],
+            "understood": True,
+        }
+
+    monkeypatch.setattr(meta_client, "complete_plan", scripted)
+    response = planner.plan_mission(make_request())  # exit mission
+
+    assert [a.direction for a in response.actions] == ["east", "east"]
+    assert attempts[0]["max_tokens"] == meta_client.MAX_OUTPUT_TOKENS
+    assert retries[0]["max_tokens"] == meta_client.REDUCED_MAX_OUTPUT_TOKENS
+    assert retries[0]["reasoning_effort"] == meta_client.REDUCED_REASONING_EFFORT
+
+
 def test_plan_from_mid_level_state(stub_level, monkeypatch):
     """Plans validate from any reported state, not just level start."""
     monkeypatch.setattr(
