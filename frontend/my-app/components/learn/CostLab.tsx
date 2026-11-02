@@ -12,7 +12,8 @@ import { cellKey } from "@/lib/bfs";
 import MazeGrid from "./MazeGrid";
 import ThinkingPanel from "./ThinkingPanel";
 
-const AUTOPLAY_MS = 150;
+/** Explanation pace: each expansion stays up long enough to read why. */
+const AUTOPLAY_MS = 2000;
 
 const TITLES: Record<SearchStrategy, string> = {
   bfs: "BFS",

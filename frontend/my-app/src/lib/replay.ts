@@ -11,8 +11,12 @@ import {
 /** Delay between replay steps: the ghost marker advances per tick. */
 export const REPLAY_STEP_MS = 350;
 
-/** Delay between explored-cell reveals: search expansion flows faster. */
-export const EXPLORED_STEP_MS = 120;
+/**
+ * Delay between explored-cell reveals: each expansion stays up long
+ * enough to read why the algorithm picked it. Deliberately slower
+ * than the route-marker walk below.
+ */
+export const EXPLORED_STEP_MS = 2000;
 
 export const STRATEGY_LABEL: Record<SearchStrategy, string> = {
   bfs: "BFS",

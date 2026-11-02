@@ -67,8 +67,12 @@ assert.deepEqual(
 assert.ok(REPLAY_STEP_MS > 0, "replay step interval is positive");
 assert.ok(EXPLORED_STEP_MS > 0, "explored reveal interval is positive");
 assert.ok(
-  EXPLORED_STEP_MS < REPLAY_STEP_MS,
-  "exploration flows faster than the route marker"
+  EXPLORED_STEP_MS >= 2000,
+  "each expansion stays up long enough to read why it was picked"
+);
+assert.ok(
+  REPLAY_STEP_MS < EXPLORED_STEP_MS,
+  "route-marker walk stays brisk while explanations linger"
 );
 assert.deepEqual(STRATEGY_LABEL, {
   bfs: "BFS",
@@ -300,6 +304,46 @@ assert.match(
   mazeScene,
   /thinking=\{replayThinking\}/,
   "narration state reaches the panel"
+);
+
+// --- Replay controls: prev/next/play/pause over both phases ---
+assert.match(
+  mazeScene,
+  /stepReplay/,
+  "scene steps the replay heads manually"
+);
+assert.match(
+  mazeScene,
+  /toggleReplayPlay/,
+  "scene pauses and resumes the replay"
+);
+assert.match(
+  mazeScene,
+  /replay\.paused\) return/,
+  "paused replays schedule no timers"
+);
+assert.match(
+  mazeScene,
+  /onStep=\{stepReplay\}/,
+  "stepping reaches the panel"
+);
+assert.match(
+  mazeScene,
+  /onTogglePlay=\{toggleReplayPlay\}/,
+  "play/pause reaches the panel"
+);
+assert.match(
+  replayPanel,
+  /Replay controls/,
+  "panel groups the replay controls"
+);
+assert.match(replayPanel, /onStep\(-1\)/, "panel steps backwards");
+assert.match(replayPanel, /onStep\(1\)/, "panel steps forwards");
+assert.match(replayPanel, /onTogglePlay/, "panel toggles play/pause");
+assert.match(
+  replayPanel,
+  /paused — step through or resume/,
+  "panel names the paused state"
 );
 
 console.log("Replay checks passed!");

@@ -243,6 +243,7 @@ function LoadedMazeScene({
     order: RouteCell[];
     exploredHead: number;
     phase: "exploring" | "routing";
+    paused: boolean;
   } | null>(null);
 
   // Refs let the patrol timer and plan executor access latest state.
@@ -332,7 +333,7 @@ function LoadedMazeScene({
   // expansion order; then the route trail animates under the ghost
   // marker. Cleanup stops the timer on unmount or level change.
   useEffect(() => {
-    if (!replay) return;
+    if (!replay || replay.paused) return;
     if (replay.phase === "exploring") {
       if (replay.exploredHead >= replay.order.length - 1) {
         setReplay((prev) =>
@@ -387,6 +388,10 @@ function LoadedMazeScene({
     replay !== null &&
     replay.phase === "routing" &&
     replay.routeHead >= replay.path.length - 1;
+  const replayAtStart =
+    replay !== null &&
+    replay.phase === "exploring" &&
+    replay.exploredHead <= 0;
 
   // Thinking narration synced to the replay heads: the live expansion
   // during "exploring", the frozen goal event plus summary while the
@@ -440,11 +445,60 @@ function LoadedMazeScene({
       order: found.result.order,
       exploredHead: reduced ? found.result.order.length - 1 : 0,
       phase: reduced ? "routing" : "exploring",
+      paused: false,
     });
   }
 
   function stopReplay() {
     setReplay(null);
+  }
+
+  // Manual replay stepping. Crossing a phase boundary continues into
+  // the other phase; every manual step pauses so the narration can
+  // be read. Reached-only replays always have a non-empty order/path.
+  function stepReplay(delta: 1 | -1) {
+    setReplay((prev) => {
+      if (prev === null) return prev;
+      if (prev.phase === "exploring") {
+        const next = prev.exploredHead + delta;
+        if (next > prev.order.length - 1) {
+          return {
+            ...prev,
+            phase: "routing",
+            routeHead: 0,
+            exploredHead: prev.order.length - 1,
+            paused: true,
+          };
+        }
+        if (next < 0) return prev;
+        return { ...prev, exploredHead: next, paused: true };
+      }
+      const next = prev.routeHead + delta;
+      if (next < 0) {
+        return {
+          ...prev,
+          phase: "exploring",
+          exploredHead: prev.order.length - 1,
+          paused: true,
+        };
+      }
+      if (next > prev.path.length - 1) return prev;
+      return { ...prev, routeHead: next, paused: true };
+    });
+  }
+
+  function toggleReplayPlay() {
+    setReplay((prev) => {
+      if (prev === null) return prev;
+      if (!prev.paused) return { ...prev, paused: true };
+      if (
+        prev.phase === "routing" &&
+        prev.routeHead >= prev.path.length - 1
+      ) {
+        return prev;
+      }
+      return { ...prev, paused: false };
+    });
   }
 
   // Record completion once, scoped to the signed-in account (or the
@@ -1180,9 +1234,13 @@ function LoadedMazeScene({
             active={replay?.strategy ?? null}
             finished={replayFinished}
             exploring={replayExploring}
+            paused={replay?.paused ?? false}
+            atStart={replayAtStart}
             thinking={replayThinking}
             onSelect={startReplay}
             onClose={stopReplay}
+            onStep={stepReplay}
+            onTogglePlay={toggleReplayPlay}
           />
         )}
     </div>

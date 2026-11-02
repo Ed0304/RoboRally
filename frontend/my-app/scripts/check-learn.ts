@@ -402,6 +402,16 @@ function route(
   );
   assert.match(
     costLab,
+    /AUTOPLAY_MS = 2000/,
+    "Dijkstra/A* lab lingers 2s per explanation step"
+  );
+  assert.match(
+    learnPanels,
+    /AUTOPLAY_MS = 2000/,
+    "BFS lesson lingers 2s per explanation step"
+  );
+  assert.match(
+    costLab,
     /trace: true/,
     "Dijkstra/A* lab records narration traces"
   );

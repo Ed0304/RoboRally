@@ -23,9 +23,13 @@ interface ReplayPanelProps {
   active: SearchStrategy | null;
   finished: boolean;
   exploring: boolean;
+  paused: boolean;
+  atStart: boolean;
   thinking: ReplayThinking | null;
   onSelect: (strategy: SearchStrategy) => void;
   onClose: () => void;
+  onStep: (delta: 1 | -1) => void;
+  onTogglePlay: () => void;
 }
 
 export default function ReplayPanel({
@@ -33,9 +37,13 @@ export default function ReplayPanel({
   active,
   finished,
   exploring,
+  paused,
+  atStart,
   thinking,
   onSelect,
   onClose,
+  onStep,
+  onTogglePlay,
 }: ReplayPanelProps) {
   const dijkstra = routes.find((entry) => entry.strategy === "dijkstra");
   const astar = routes.find((entry) => entry.strategy === "astar");
@@ -143,12 +151,43 @@ export default function ReplayPanel({
         <div className="mt-2 border-t border-[#3B414B] pt-2">
           <p className="text-xs leading-5 text-[#ADB2BD]">
             {STRATEGY_LABEL[active]} replay{" "}
-            {exploring
-              ? "expanding — blue tiles are states being searched."
-              : finished
-                ? "finished."
-                : "playing — follow the amber marker."}
+            {paused && !finished
+              ? "paused — step through or resume to keep reading."
+              : exploring
+                ? "expanding — blue tiles are states being searched."
+                : finished
+                  ? "finished."
+                  : "playing — follow the amber marker."}
           </p>
+          <div className="mt-2 flex gap-2" role="group" aria-label="Replay controls">
+            <button
+              type="button"
+              onClick={() => onStep(-1)}
+              disabled={atStart}
+              title="Previous step"
+              className="flex-1 rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-1.5 text-xs font-semibold text-[#F3F0E8] transition hover:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={onTogglePlay}
+              disabled={finished}
+              title={paused ? "Resume the replay" : "Pause the replay"}
+              className="flex-1 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {paused ? "Play" : "Pause"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onStep(1)}
+              disabled={finished}
+              title="Next step"
+              className="flex-1 rounded-md border border-[#3B414B] bg-[#292E36] px-3 py-1.5 text-xs font-semibold text-[#F3F0E8] transition hover:border-cyan-400/50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Next →
+            </button>
+          </div>
           {thinking !== null && (
             <div className="mt-2">
               <ThinkingPanel
