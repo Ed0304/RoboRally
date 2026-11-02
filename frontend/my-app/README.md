@@ -5,6 +5,8 @@ Next.js + React Three Fiber 3D game client. See the repository root README for t
 ## Run
 
 ```powershell
+cd frontend/my-app
+Copy-Item .env.example .env   # fill in MONGODB_URI for the seed script
 npm install
 npm run dev   # http://localhost:3000 (expects the backend on :8000)
 ```
@@ -20,5 +22,5 @@ npx tsx scripts/check-execution.ts
 npx tsx scripts/check-progression.ts
 npx tsx scripts/check-controls.ts
 npx tsx scripts/check-account-isolation.ts
-npx next build --webpack
+npm run build
 ```

@@ -5,15 +5,19 @@ FastAPI service for authentication, level data, AI mission planning, and user pr
 ## Run
 
 ```powershell
+cd backend
+python -m venv .venv   # every fresh clone must create this; it is not committed
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env   # fill in real values, see below
-.\.venv\Scripts\python.exe main.py
+.\.venv\Scripts\python.exe main.py   # serves http://localhost:8000
 ```
+
+macOS/Linux: use `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`, `cp .env.example .env`, `.venv/bin/python main.py`.
 
 ## Environment (`backend/.env`, never committed)
 
 - `MONGODB_URI`, `MONGODB_DATABASE`
-- `SESSION_SECRET`, `SESSION_COOKIE_SECURE`
+- `SESSION_SECRET`, `SESSION_COOKIE_SECURE` (`false` locally, `true` in production)
 - `MODEL_API_KEY` — Meta Model API key (`META_API_KEY` accepted as a legacy alias)
 
 ## API overview
