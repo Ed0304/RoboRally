@@ -56,6 +56,10 @@ import {
   replayRoutes,
 } from "@/lib/replay";
 import {
+  DEFAULT_EXPLAIN_SPEED,
+  intervalFor,
+} from "@/lib/explainSearch";
+import {
   EXEC_STEP_DELAY_MS,
   IDLE_EXECUTION,
   PAUSE_POLL_MS,
@@ -245,6 +249,8 @@ function LoadedMazeScene({
     phase: "exploring" | "routing";
     paused: boolean;
   } | null>(null);
+  // Replay playback speed; kept across restarts as a user preference.
+  const [replaySpeed, setReplaySpeed] = useState(DEFAULT_EXPLAIN_SPEED);
 
   // Refs let the patrol timer and plan executor access latest state.
   const robotRef = useRef(robotState);
@@ -354,7 +360,7 @@ function LoadedMazeScene({
             ? null
             : { ...prev, exploredHead: prev.exploredHead + 1 }
         );
-      }, EXPLORED_STEP_MS);
+      }, intervalFor(EXPLORED_STEP_MS, replaySpeed));
       return () => clearTimeout(timer);
     }
     if (replay.routeHead >= replay.path.length - 1) return;
@@ -362,9 +368,9 @@ function LoadedMazeScene({
       setReplay((prev) =>
         prev === null ? null : { ...prev, routeHead: prev.routeHead + 1 }
       );
-    }, REPLAY_STEP_MS);
+    }, intervalFor(REPLAY_STEP_MS, replaySpeed));
     return () => clearTimeout(timer);
-  }, [replay]);
+  }, [replay, replaySpeed]);
 
   const replayExploring =
     replay !== null && replay.phase === "exploring";
@@ -1241,6 +1247,8 @@ function LoadedMazeScene({
             onClose={stopReplay}
             onStep={stepReplay}
             onTogglePlay={toggleReplayPlay}
+            speed={replaySpeed}
+            onSpeedChange={setReplaySpeed}
           />
         )}
     </div>

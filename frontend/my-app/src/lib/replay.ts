@@ -12,11 +12,11 @@ import {
 export const REPLAY_STEP_MS = 350;
 
 /**
- * Delay between explored-cell reveals: each expansion stays up long
- * enough to read why the algorithm picked it. Deliberately slower
- * than the route-marker walk below.
+ * Base delay between explored-cell reveals at 1x speed: each
+ * expansion stays up a second. Deliberately slower than the
+ * route-marker walk below; the speed slider scales both.
  */
-export const EXPLORED_STEP_MS = 2000;
+export const EXPLORED_STEP_MS = 1000;
 
 export const STRATEGY_LABEL: Record<SearchStrategy, string> = {
   bfs: "BFS",

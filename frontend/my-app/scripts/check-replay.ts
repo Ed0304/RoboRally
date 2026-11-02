@@ -66,9 +66,10 @@ assert.deepEqual(
 
 assert.ok(REPLAY_STEP_MS > 0, "replay step interval is positive");
 assert.ok(EXPLORED_STEP_MS > 0, "explored reveal interval is positive");
-assert.ok(
-  EXPLORED_STEP_MS >= 2000,
-  "each expansion stays up long enough to read why it was picked"
+assert.equal(
+  EXPLORED_STEP_MS,
+  1000,
+  "base explanation pace is 1s per step at 1x"
 );
 assert.ok(
   REPLAY_STEP_MS < EXPLORED_STEP_MS,
@@ -344,6 +345,38 @@ assert.match(
   replayPanel,
   /paused — step through or resume/,
   "panel names the paused state"
+);
+
+// --- Replay speed: one slider scales both phases ---
+assert.match(
+  mazeScene,
+  /replaySpeed/,
+  "scene holds the replay playback speed"
+);
+assert.match(
+  mazeScene,
+  /intervalFor\(EXPLORED_STEP_MS, replaySpeed\)/,
+  "exploring phase honors the speed slider"
+);
+assert.match(
+  mazeScene,
+  /intervalFor\(REPLAY_STEP_MS, replaySpeed\)/,
+  "route walk honors the speed slider"
+);
+assert.match(
+  mazeScene,
+  /onSpeedChange=\{setReplaySpeed\}/,
+  "speed changes reach the panel"
+);
+assert.match(
+  replayPanel,
+  /SpeedSlider/,
+  "panel renders the speed slider"
+);
+assert.match(
+  replayPanel,
+  /<SpeedSlider[\s\S]*?tone="hud"/,
+  "speed slider uses HUD styling"
 );
 
 console.log("Replay checks passed!");

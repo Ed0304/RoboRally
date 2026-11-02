@@ -19,10 +19,14 @@ import {
 } from "@/lib/bfs";
 import { BFS_LAB, LAB_MAZES } from "@/lib/labMazes";
 import {
+  DEFAULT_EXPLAIN_SPEED,
+  MAX_EXPLAIN_SPEED,
+  MIN_EXPLAIN_SPEED,
   STRATEGY_INTRO,
   bfsStepToEvent,
   describeStep,
   describeSummary,
+  intervalFor,
 } from "@/lib/explainSearch";
 
 function route(
@@ -402,14 +406,43 @@ function route(
   );
   assert.match(
     costLab,
-    /AUTOPLAY_MS = 2000/,
-    "Dijkstra/A* lab lingers 2s per explanation step"
+    /BASE_STEP_MS = 1000/,
+    "Dijkstra/A* lab plays 1s per step at 1x"
   );
   assert.match(
     learnPanels,
-    /AUTOPLAY_MS = 2000/,
-    "BFS lesson lingers 2s per explanation step"
+    /BASE_STEP_MS = 1000/,
+    "BFS lesson plays 1s per step at 1x"
   );
+  assert.match(
+    costLab,
+    /<SpeedSlider/,
+    "Dijkstra/A* lab offers a speed slider"
+  );
+  assert.match(
+    learnPanels,
+    /<SpeedSlider/,
+    "BFS lesson offers a speed slider"
+  );
+  assert.match(
+    costLab,
+    /intervalFor\(BASE_STEP_MS, speed\)/,
+    "Dijkstra/A* lab scales its pace by the slider"
+  );
+  assert.match(
+    learnPanels,
+    /intervalFor\(BASE_STEP_MS, speed\)/,
+    "BFS lesson scales its pace by the slider"
+  );
+
+  // Speed math on the real helper: 0.5x doubles, 4x quarters.
+  assert.equal(DEFAULT_EXPLAIN_SPEED, 1);
+  assert.equal(MIN_EXPLAIN_SPEED, 0.5);
+  assert.equal(MAX_EXPLAIN_SPEED, 4);
+  assert.equal(intervalFor(1000, 1), 1000);
+  assert.equal(intervalFor(1000, 0.5), 2000);
+  assert.equal(intervalFor(1000, 4), 250);
+  assert.equal(intervalFor(1000, 0), 1000);
   assert.match(
     costLab,
     /trace: true/,

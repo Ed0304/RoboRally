@@ -9,6 +9,7 @@ import type {
 } from "@/lib/pathfinding";
 import type { SummaryInput } from "@/lib/explainSearch";
 import ThinkingPanel from "../learn/ThinkingPanel";
+import SpeedSlider from "../learn/SpeedSlider";
 
 export interface ReplayThinking {
   strategy: SearchStrategy;
@@ -30,6 +31,8 @@ interface ReplayPanelProps {
   onClose: () => void;
   onStep: (delta: 1 | -1) => void;
   onTogglePlay: () => void;
+  speed: number;
+  onSpeedChange: (speed: number) => void;
 }
 
 export default function ReplayPanel({
@@ -44,6 +47,8 @@ export default function ReplayPanel({
   onClose,
   onStep,
   onTogglePlay,
+  speed,
+  onSpeedChange,
 }: ReplayPanelProps) {
   const dijkstra = routes.find((entry) => entry.strategy === "dijkstra");
   const astar = routes.find((entry) => entry.strategy === "astar");
@@ -187,6 +192,14 @@ export default function ReplayPanel({
             >
               Next →
             </button>
+          </div>
+          <div className="mt-2">
+            <SpeedSlider
+              id="replay-speed"
+              speed={speed}
+              onChange={onSpeedChange}
+              tone="hud"
+            />
           </div>
           {thinking !== null && (
             <div className="mt-2">

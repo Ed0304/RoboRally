@@ -28,6 +28,20 @@ export const STRATEGY_INTRO: Record<
   },
 };
 
+/**
+ * Playback speed bounds for explanation animations. 1x plays each step
+ * for the surface's base interval; 0.5x doubles it, 4x quarters it.
+ */
+export const MIN_EXPLAIN_SPEED = 0.5;
+export const MAX_EXPLAIN_SPEED = 4;
+export const DEFAULT_EXPLAIN_SPEED = 1;
+
+/** Step interval for a base pace at a given playback speed. */
+export function intervalFor(baseMs: number, speed: number): number {
+  if (!(speed > 0)) return baseMs;
+  return Math.max(50, Math.round(baseMs / speed));
+}
+
 export interface StepStat {
   label: string;
   value: string;

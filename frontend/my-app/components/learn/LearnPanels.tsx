@@ -11,7 +11,11 @@ import {
   traceBfs,
   type BfsTrace,
 } from "@/lib/bfs";
-import { bfsStepToEvent } from "@/lib/explainSearch";
+import {
+  DEFAULT_EXPLAIN_SPEED,
+  bfsStepToEvent,
+  intervalFor,
+} from "@/lib/explainSearch";
 import {
   planRoute,
   previewOptionsFor,
@@ -19,9 +23,10 @@ import {
 } from "@/lib/pathfinding";
 import MazeGrid from "./MazeGrid";
 import ThinkingPanel from "./ThinkingPanel";
+import SpeedSlider from "./SpeedSlider";
 
-/** Explanation pace: each expansion stays up long enough to read why. */
-const AUTOPLAY_MS = 2000;
+/** Explanation pace at 1x: each expansion stays up a second. */
+const BASE_STEP_MS = 1000;
 
 export interface LabMaze {
   level: LevelData;
@@ -52,6 +57,7 @@ export function LessonSection({ lab }: { lab: LabMaze }) {
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [showPath, setShowPath] = useState(false);
+  const [speed, setSpeed] = useState(DEFAULT_EXPLAIN_SPEED);
 
   const totalSteps = trace.steps.length;
 
@@ -65,10 +71,10 @@ export function LessonSection({ lab }: { lab: LabMaze }) {
 
     const timer = window.setInterval(() => {
       setStep((current) => Math.min(current + 1, totalSteps));
-    }, AUTOPLAY_MS);
+    }, intervalFor(BASE_STEP_MS, speed));
 
     return () => window.clearInterval(timer);
-  }, [playing, step, totalSteps]);
+  }, [playing, step, totalSteps, speed]);
 
   const overlay = useMemo(() => {
     const explored = new Set<string>();
@@ -176,6 +182,8 @@ export function LessonSection({ lab }: { lab: LabMaze }) {
               Reset
             </button>
           </div>
+
+          <SpeedSlider id="bfs-speed" speed={speed} onChange={setSpeed} />
 
           <label className="flex items-center gap-2 text-sm text-muted">
             <input

@@ -11,9 +11,14 @@ import {
 import { cellKey } from "@/lib/bfs";
 import MazeGrid from "./MazeGrid";
 import ThinkingPanel from "./ThinkingPanel";
+import SpeedSlider from "./SpeedSlider";
+import {
+  DEFAULT_EXPLAIN_SPEED,
+  intervalFor,
+} from "@/lib/explainSearch";
 
-/** Explanation pace: each expansion stays up long enough to read why. */
-const AUTOPLAY_MS = 2000;
+/** Explanation pace at 1x: each expansion stays up a second. */
+const BASE_STEP_MS = 1000;
 
 const TITLES: Record<SearchStrategy, string> = {
   bfs: "BFS",
@@ -49,6 +54,7 @@ export default function CostLab({
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [showPath, setShowPath] = useState(false);
+  const [speed, setSpeed] = useState(DEFAULT_EXPLAIN_SPEED);
 
   const totalSteps = result.order.length;
 
@@ -62,10 +68,10 @@ export default function CostLab({
 
     const timer = window.setInterval(() => {
       setStep((current) => Math.min(current + 1, totalSteps));
-    }, AUTOPLAY_MS);
+    }, intervalFor(BASE_STEP_MS, speed));
 
     return () => window.clearInterval(timer);
-  }, [playing, step, totalSteps]);
+  }, [playing, step, totalSteps, speed]);
 
   const explored = useMemo(
     () => new Set(result.order.slice(0, step).map(cellKey)),
@@ -139,6 +145,12 @@ export default function CostLab({
             Reset
           </button>
         </div>
+
+        <SpeedSlider
+          id={`lab-speed-${strategy}`}
+          speed={speed}
+          onChange={setSpeed}
+        />
 
         <label className="flex items-center gap-2 text-sm text-muted">
           <input
