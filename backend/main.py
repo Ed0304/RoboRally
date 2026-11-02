@@ -1,4 +1,6 @@
 # This serves as the main point for the backend
+import os
+
 from fastapi import FastAPI
 import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,10 +16,23 @@ app = FastAPI(
     version="0.1.0",
 )
 
-origins = [
-    "http://localhost:3000" #NextJS frontend, localhost
-    # TODO: Add deployment URL once deployed.
-]
+def _frontend_origins() -> list[str]:
+    """Explicit CORS origins from FRONTEND_ORIGINS (comma-separated).
+
+    Defaults to local development. "*" is forbidden: credentialed
+    requests require explicitly permitted origins.
+    """
+    raw = os.getenv("FRONTEND_ORIGINS", "http://localhost:3000")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if "*" in origins:
+        raise RuntimeError(
+            "FRONTEND_ORIGINS must list explicit origins; '*' is "
+            "forbidden with credentialed requests."
+        )
+    return origins
+
+
+origins = _frontend_origins()
 # Add routers for authentication, AI and game logic
 app.include_router(login.router)
 app.include_router(register.router)
@@ -42,6 +57,8 @@ def home():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app")
-
-
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8000")),
+    )

@@ -2,6 +2,7 @@
 """Shared database and authentication utilities."""
 
 import os
+from pathlib import Path
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
@@ -12,11 +13,25 @@ from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 from pwdlib import PasswordHash
 
-load_dotenv()
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BACKEND_DIR / ".env")
 
-MONGODB_URI = os.environ["MONGODB_URI"]
+
+def _require_env(name: str) -> str:
+    """Read required config, failing fast with a sanitized message."""
+    value = os.environ.get(name)
+
+    if not value:
+        raise RuntimeError(
+            f"Missing required backend configuration: {name}. Set it "
+            "in the environment or backend/.env (see .env.example)."
+        )
+
+    return value
+
+MONGODB_URI = _require_env("MONGODB_URI")
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "roborally")
-SESSION_SECRET = os.environ["SESSION_SECRET"]
+SESSION_SECRET = _require_env("SESSION_SECRET")
 
 SESSION_COOKIE = "roborally_session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days

@@ -5,15 +5,13 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
+import { API_URL } from "@/lib/api";
 import MazeScene from "../../../../../components/maze/MazeScene";
 import type { ApiLevel } from "../../../../lib/apilevels";
 import {
   isLevelUnlocked,
   loadProgress,
 } from "../../../../lib/progress";
-
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 
 export default function GameLevelPage() {
