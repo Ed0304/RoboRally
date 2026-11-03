@@ -2,6 +2,8 @@
 
 **An AI-agent-powered 3D maze game built for the Meta Global AI Developer Hackathon.**
 
+Demo Video: [Watch heres](https://www.youtube.com/watch?v=fdWfV4etr14)
+
 Guide a robot through a factory maze by giving natural-language missions to an AI agent. The agent plans a sequence of moves with Meta's Muse Spark model, the game engine validates every move against walls, lasers, doors, and patrolling enemies, and the robot executes valid plans step by step in a 3D factory environment. There are no manual controls: the AI agent is the sole driver of the robot.
 
 ## The agentic loop
