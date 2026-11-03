@@ -199,7 +199,17 @@ persists), log out; check `GET /api/agent/health` reports
 
 ## Hackathon alignment
 
-Built for the Meta Global AI Developer Hackathon across both themes: **Push the Frontier** (an agent that plans and controls a machine in a simulated physical system) and **Build for Your World** (natural-language robot control instead of hand-programmed movement). It uses Muse Spark through the Meta Model API with structured output, and was built with Muse Code assistance.
+Built for the Meta Global AI Developer Hackathon under the **Build for Your World** theme: AI that adapts to each player's own world — their words, their skill level, and their community — instead of forcing players to adapt to the machine.
+
+RoboRally aligns with this theme because:
+
+- **Your words drive your robot.** There are no manual controls: players describe missions in natural language ("Reach the exit without touching lasers") and the Muse Spark agent plans them in validated ≤12-move segments. The engine simulates every move against walls, lasers, doors, enemies, and battery before execution, explains rejections, and stops honestly for replanning — so anyone, including non-programmers, can command a robot safely.
+- **Learning meets players where they are.** The Pathfinding Lab (`/learn`) teaches BFS, Dijkstra, and A* through bite-size lessons with hands-on visualizations on practice mazes — no algorithms background required. Tutorial Levels 1–3 pair one algorithm per level with free route previews, while Story Levels 4–6 run agent-only with no hints for players ready for the full rescue challenge.
+- **Players build worlds for each other.** The community hub lets players create, publish, test-play, and share their own factory mazes, with attempts, completions, best runs, and per-level leaderboards — turning personal creativity into playable challenges for others.
+- **Progress is personal and persistent.** Accounts track completed levels and a Success/Failed prompt history per player, and Story wins rank on three leaderboards (most battery left, fewest steps, planner score vs. BFS/Dijkstra/A* benchmarks) — so every player sees their own growth against both algorithms and the community.
+- **A real-world robotics pattern, made approachable.** Battery budgets (100% start; 1%/3%/5% terrain costs), lethal hazards, and validate-before-act execution mirror real energy- and safety-constrained robotics, packaged as a factory-rescue game anyone can play.
+
+It uses Muse Spark 1.3 through the Meta Model API with constrained JSON structured output, and was built with Muse Code assistance.
 
 ---
 
